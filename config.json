@@ -1,0 +1,12 @@
+{
+  "port": 8765,
+  "google_maps_api_key": "",
+  "quake_hold_hours": 24,
+  "jr_lines": ["東海道線(豊橋～米原)", "武豊線"],
+  "subway_lines": {"M_LINE": "名城線・名港線"},
+  "meitetsu_lines": ["名古屋本線", "河和線", "常滑線"],
+  "isewangan_east": "東海",
+  "isewangan_west": "みえ川越",
+  "enable_route23": false,
+  "route23_notes": []
+}

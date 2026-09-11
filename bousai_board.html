@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>防災・交通情報モニタ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0F2536;       /* 夜の港 */
+  --panel:#14304A;
+  --rule:#27506B;
+  --ink:#E8EEF1;
+  --mute:#89A3B3;
+  --ok:#46B98C;
+  --caution:#F0B429;
+  --alarm:#E5484D;
+  --alarm-fill:#7E161B;
+  --stale:#7B8A95;
+}
+*{box-sizing:border-box}
+html{font-size:1.75vh}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none}
+body{
+  font-family:"BIZ UDPGothic","BIZ UDPゴシック","Yu Gothic UI","Yu Gothic","Meiryo","Hiragino Sans","Noto Sans JP",sans-serif;
+  display:grid;grid-template-rows:6.6vh 23vh 1fr 3.4vh;gap:1vh;padding:1vh 1.2vw 0.6vh;
+  font-feature-settings:"palt";
+}
+body.alarm{grid-template-rows:6.6vh 36vh 1fr 3.4vh}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;gap:1.4vw;padding:0 1.2vw;border-radius:.5vh;background:var(--panel)}
+header h1{margin:0;font-size:1.6rem;font-weight:700;letter-spacing:.06em}
+header .state{font-size:1.15rem;color:var(--mute)}
+header .clock{margin-left:auto;font-size:2.35rem;font-weight:700;letter-spacing:.02em}
+header .clock small{font-size:.55em;font-weight:400;color:var(--mute);margin-right:.8em}
+body.alarm header{background:var(--alarm)}
+body.alarm header .state{color:#fff;font-weight:700;font-size:1.3rem}
+body.alarm header .clock small{color:#FFE3E3}
+header .conn{display:none;padding:.2em .8em;border-radius:.3em;background:var(--caution);color:#1d1600;font-weight:700;font-size:1.1rem}
+body.noconn header .conn{display:inline-block}
+
+/* ---------- signal lamps（発令条件） ---------- */
+#alerts{display:flex;gap:.8vw;min-height:0}
+.tile{flex:1 1 0;min-width:15.5vw;display:flex;flex-direction:column;padding:1.2vh .9vw;border-radius:.5vh;
+  background:var(--panel);border-left:.45vw solid transparent;overflow:hidden;position:relative}
+.tile.alarm{flex-grow:1.7;background:var(--alarm-fill);border-left-color:var(--alarm)}
+.tile.caution{flex-grow:1.25;border-left-color:var(--caution)}
+.tile .head{display:flex;align-items:center;gap:.7em;font-size:1rem}
+.lamp{flex:none;width:1.5em;height:1.5em;border-radius:50%;background:#0A1B28;box-shadow:inset 0 0 0 .18em #2D4D63}
+.tile.normal .lamp{box-shadow:inset 0 0 0 .18em #2D4D63}
+.tile.caution .lamp{background:var(--caution);box-shadow:0 0 .7em var(--caution)}
+.tile.alarm .lamp{background:#FF5A5F;box-shadow:0 0 1.1em #FF5A5F,0 0 0 .2em #fff inset;animation:pulse 1.8s ease-in-out infinite}
+.tile.stale.normal .lamp{background:transparent;box-shadow:inset 0 0 0 .16em var(--stale);border:.12em dashed var(--stale)}
+@keyframes pulse{50%{box-shadow:0 0 .2em #FF5A5F,0 0 0 .2em #fff inset}}
+@media (prefers-reduced-motion:reduce){.tile.alarm .lamp{animation:none}}
+.tile .title{font-size:1.38em;font-weight:700;white-space:nowrap}
+.tile .scope{font-size:.95em;color:var(--mute);margin-top:.35em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .crit{font-size:.95em;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.alarm .scope,.tile.alarm .crit{color:#F5C9CB}
+.tile .body{flex:1;min-height:0;overflow:hidden;margin-top:.6em;font-size:1rem}
+.tile .verdict{font-size:1.25em;color:var(--mute)}
+.tile.caution .verdict{color:var(--caution)}
+.tile .ln{margin-bottom:.45em}
+.tile .ln .m{font-size:1.4em;font-weight:700;line-height:1.25}
+.tile.alarm .ln .m{font-size:1.75em}
+.tile.caution .ln .m{color:var(--caution);font-size:1.2em}
+.tile .ln .s{font-size:1.05em;color:#D5DEE3;line-height:1.35}
+.tile .note{font-size:.9em;color:var(--mute);margin-top:.3em;line-height:1.35}
+.tile.alarm .note{color:#F5C9CB}
+.tile .flag{position:absolute;top:.9vh;right:.7vw;font-size:.85rem;color:var(--caution)}
+
+/* ---------- main ---------- */
+main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
+#rail{display:grid;grid-template-columns:1fr 1fr;column-gap:1.6em;align-content:start}
+.rcol{min-width:0}
+.col{display:flex;flex-direction:column;gap:.9vh;min-height:0}
+.panel{background:var(--panel);border-radius:.5vh;padding:1vh .9vw;display:flex;flex-direction:column;min-height:0}
+.panel>h2{margin:0 0 .5em;font-size:1.25rem;font-weight:700;display:flex;align-items:baseline;gap:.8em;white-space:nowrap}
+.panel>h2 .sub{font-size:.8em;font-weight:400;color:var(--mute)}
+.panel>h2 .flag{margin-left:auto;font-size:.75em;font-weight:400;color:var(--caution)}
+.fit{flex:1;min-height:0;overflow:hidden;font-size:1rem}
+
+/* rail */
+.group{margin-bottom:.7em}
+.group>.gh{font-size:.95em;color:var(--mute);margin-bottom:.3em;display:flex;gap:.8em}
+.group>.gh .flag{margin-left:auto;color:var(--caution)}
+.group .other{font-size:.95em;color:var(--caution);padding:.3em 0}
+.rows{display:grid;grid-template-columns:1fr}
+.row{display:flex;align-items:center;gap:.6em;padding:.32em 0;border-bottom:1px solid var(--rule);min-width:0}
+.row.wide{grid-column:1/-1;flex-wrap:wrap}
+.chip{flex:none;min-width:2.1em;height:1.55em;padding:0 .25em;border-radius:.3em;border:.16em solid;display:grid;place-items:center;
+  font-size:.85em;font-weight:700;background:#fff;color:#222}
+.chip.blank{border-width:0}
+.row .nm{font-size:1.15em;font-weight:700;white-space:nowrap}
+.row .nm small{font-size:.72em;font-weight:400;color:var(--mute);margin-left:.3em}
+.row .st{margin-left:auto;font-size:1.05em;color:var(--mute);white-space:nowrap}
+.row .st::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.45em;vertical-align:.1em}
+.row.delay .st,.row.info .st{color:var(--caution);font-weight:700}
+.row.delay .st::before,.row.info .st::before{background:var(--caution)}
+.row.stop .st{color:#FF7A7E;font-weight:700}
+.row.stop .st::before{background:var(--alarm)}
+.row.unknown .st{color:var(--stale)}
+.row.unknown .st::before{background:var(--stale)}
+.row .dt{flex-basis:100%;font-size:.98em;line-height:1.4;color:#D5DEE3;padding-left:2.7em;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.tight .row{padding:.2em 0}
+.tight .row .dt{-webkit-line-clamp:1}
+.tight .group{margin-bottom:.35em}
+.tight .it{padding:.22em 0}
+
+/* road */
+.road{display:flex;flex-direction:column;min-height:0}
+.items{list-style:none;margin:0;padding:0}
+.it{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:.7em;padding:.38em 0;border-bottom:1px solid var(--rule)}
+.badge{align-self:center;font-size:.9em;font-weight:700;padding:.2em .55em;border-radius:.3em;white-space:nowrap;
+  background:#2A4A60;color:var(--ink)}
+.it.stop .badge{background:var(--alarm);color:#fff}
+.it.delay .badge{background:var(--caution);color:#1d1600}
+.it .tt{font-size:1.1em;font-weight:700}
+.it .tt small{font-size:.8em;font-weight:400;color:var(--mute);margin-left:.6em}
+.it .dd{font-size:.92em;color:var(--mute)}
+.it .dd:empty{display:none}
+.it.more{display:block;color:var(--mute);font-size:.95em;border-bottom:none}
+.empty{color:var(--mute);font-size:1.1em;padding:.3em 0}
+.empty::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.5em;vertical-align:.1em}
+.notes{margin:.2em 0 .5em;padding:.4em .6em;border-left:.25em solid var(--caution);font-size:1em;line-height:1.4}
+.caveat{font-size:.82em;color:var(--mute);margin-top:.3em}
+#mapPanel{display:none;flex:0 0 40%;padding:0;overflow:hidden}
+body.hasmap #mapPanel{display:flex}
+#map{flex:1}
+
+/* footer */
+footer{display:flex;align-items:center;gap:1.3vw;font-size:.9rem;color:var(--mute);white-space:nowrap;overflow:hidden;padding:0 .4vw}
+footer .s.bad{color:var(--caution)}
+footer .s.bad::before{content:"△ "}
+footer .demo{color:var(--caution);font-weight:700}
+footer .src{margin-left:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>防災・交通情報</h1>
+  <span class="state" id="state">発令条件に該当する情報はありません</span>
+  <span class="conn">サーバーから応答がありません</span>
+  <div class="clock num" id="clock"></div>
+</header>
+
+<section id="alerts"></section>
+
+<main>
+  <div class="col">
+    <div class="panel" style="flex:1">
+      <h2>鉄道</h2>
+      <div class="fit" id="rail" data-base="130"></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel road" style="flex:1">
+      <h2>伊勢湾岸道<span class="sub" id="iwSection"></span><span class="flag" id="iwFlag"></span></h2>
+      <div class="fit" id="iw" data-base="120"></div>
+    </div>
+    <div class="panel road" id="r23Panel" style="flex:1">
+      <h2>国道23号<span class="sub">築地口IC以西〜四日市</span><span class="flag" id="r23Flag"></span></h2>
+      <div class="fit" id="r23"></div>
+    </div>
+    <div class="panel" id="mapPanel"><div id="map"></div></div>
+  </div>
+</main>
+
+<footer id="footer"></footer>
+
+<script>
+"use strict";
+const DEMO = new URLSearchParams(location.search).has("demo");
+const POLL_MS = 15000;
+const WD = "日月火水木金土";
+let lastOk = 0;
+
+/* ---------- 時計 ---------- */
+/* PCのタイムゾーン設定に関係なく日本時間で表示 */
+function jst(d){ return new Date(d.getTime() + (d.getTimezoneOffset() + 540) * 60000); }
+function tick(){
+  const d = jst(new Date());
+  const p = n => String(n).padStart(2,"0");
+  document.getElementById("clock").innerHTML =
+    `<small>${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${WD[d.getDay()]})</small>${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  document.body.classList.toggle("noconn", Date.now() - lastOk > 60000);
+}
+setInterval(tick, 1000); tick();
+
+/* ---------- 共通 ---------- */
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function hhmm(isoStr){ if(!isoStr) return "--:--"; const d=jst(new Date(isoStr)); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+function staleFlag(src){ if(!src) return ""; if(!src.updated) return "取得待ち"; return src.stale ? `取得できていません（最終 ${hhmm(src.updated)}）` : ""; }
+
+/* はみ出したら文字を縮め、それでも無理なら末尾を「ほか n 件」にまとめる */
+function fit(box){
+  const base = +box.dataset.base || 100;
+  box.style.fontSize = base + "%";
+  box.classList.remove("tight");
+  let s = base;
+  const over = () => box.scrollHeight > box.clientHeight + 2;
+  while (over() && s > 84){ s -= 4; box.style.fontSize = s + "%"; }
+  if (over()) box.classList.add("tight");
+  while (over() && s > 64){ s -= 4; box.style.fontSize = s + "%"; }
+  const lists = [...box.querySelectorAll("[data-trim]")].reverse();
+  for (const list of lists){
+    const kids = [...list.children].filter(c => !c.classList.contains("more"));
+    let hidden = 0, more = null;
+    while (box.scrollHeight > box.clientHeight + 2 && kids.length - hidden > 1){
+      kids[kids.length - 1 - hidden].style.display = "none"; hidden++;
+      if (!more){ more = document.createElement(list.tagName === "UL" ? "li" : "div"); more.className = "it more"; list.appendChild(more); }
+      more.textContent = `ほか ${hidden} 件`;
+    }
+  }
+}
+
+/* ---------- 発令条件タイル ---------- */
+function renderAlerts(alerts){
+  const box = document.getElementById("alerts");
+  let any = false;
+  box.innerHTML = alerts.map(a => {
+    if (a.level === "alarm") any = true;
+    const cls = [a.level, a.stale ? "stale" : ""].join(" ");
+    let body;
+    if (a.lines.length){
+      body = a.lines.map(l => `<div class="ln"><div class="m">${esc(l.main)}</div>${l.sub ? `<div class="s">${esc(l.sub)}</div>` : ""}</div>`).join("");
+    } else {
+      body = `<div class="verdict">${a.stale ? "判定できません" : "該当なし"}</div>`;
+    }
+    const note = a.note ? `<div class="note">${esc(a.note)}</div>` : "";
+    const hold = (a.level === "alarm" && a.hold) ? `<div class="note">${esc(a.hold)}</div>` : "";
+    const flag = a.stale ? `<div class="flag">データ取得遅延</div>` : "";
+    return `<div class="tile ${cls}">${flag}
+      <div class="head"><span class="lamp"></span><span class="title">${esc(a.title)}</span></div>
+      <div class="scope">${esc(a.scope)}</div><div class="crit">${esc(a.criteria)}</div>
+      <div class="body">${body}${hold}${note}</div></div>`;
+  }).join("");
+  document.body.classList.toggle("alarm", any);
+  const n = alerts.filter(a => a.level === "alarm").length;
+  document.getElementById("state").textContent = any
+    ? `発令条件に該当 ${n} 項目`
+    : "発令条件に該当する情報はありません";
+  box.querySelectorAll(".tile .body").forEach(fit);
+}
+
+/* ---------- 鉄道 ---------- */
+function railRow(l, wideIfAbnormal = true){
+  const abn = l.level !== "normal" && l.level !== "unknown";
+  const chip = l.code
+    ? `<span class="chip" style="border-color:${esc(l.color)}">${esc(l.code)}</span>`
+    : `<span class="chip blank" style="background:${esc(l.color)}"></span>`;
+  const sub = l.sub ? `<small>${esc(l.sub)}</small>` : "";
+  const dt = (abn && l.detail) ? `<div class="dt">${esc(l.detail)}</div>` : "";
+  return `<div class="row ${esc(l.level)} ${abn && wideIfAbnormal ? "wide" : ""}">${chip}<span class="nm">${esc(l.name)}${sub}</span><span class="st">${esc(l.status)}</span>${dt}</div>`;
+}
+function renderRail(rail){
+  const g = (title, src, inner) => {
+    const f = staleFlag(src);
+    return `<div class="group"><div class="gh"><span>${title}</span>${f ? `<span class="flag">${esc(f)}</span>` : ""}</div>${inner}</div>`;
+  };
+  const aonami = {name:"あおなみ線", code:"", color:"#1E6FB8", level: rail.aonami.level || "unknown",
+                  status: rail.aonami.status || "取得中", detail: rail.aonami.detail || ""};
+  const mt = rail.meitetsu;
+  const el = document.getElementById("rail");
+  el.innerHTML = `<div class="rcol">` +
+    g("JR東海", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    g("名古屋市営地下鉄", rail.subway.src, `<div class="rows">${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    `</div><div class="rcol">` +
+    g("名鉄", mt.src, `<div class="rows">${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+      (mt.other ? `<div class="other">${esc(mt.other)}</div>` : "") +
+      (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
+    g("あおなみ線", rail.aonami.src, `<div class="rows">${railRow(aonami)}</div>`) + `</div>`;
+  fit(el);
+}
+
+/* ---------- 道路 ---------- */
+function itemsHtml(items, emptyText){
+  if (!items.length) return `<div class="empty">${emptyText}</div>`;
+  return `<ul class="items" data-trim>` + items.map(i =>
+    `<li class="it ${esc(i.level)}"><span class="badge">${esc(i.kind)}</span>
+      <span class="tt">${esc(i.title)}${i.direction ? `<small>${esc(i.direction)}</small>` : ""}</span>
+      <span class="dd">${esc(i.detail || "")}</span></li>`).join("") + `</ul>`;
+}
+function renderRoad(road, hasMap){
+  document.getElementById("iwSection").textContent = road.isewangan.section || "";
+  document.getElementById("iwFlag").textContent = staleFlag(road.isewangan.src);
+  const iw = document.getElementById("iw");
+  const r23Panel = document.getElementById("r23Panel");
+  iw.innerHTML = itemsHtml(road.isewangan.items || [], "通行止・渋滞・規制の情報はありません");
+  if (!road.route23){            // 国道23号は保留中（config.json の enable_route23）
+    r23Panel.style.display = "none";
+    fit(iw);
+    return;
+  }
+  r23Panel.style.display = "";
+  const nIw = (road.isewangan.items || []).length;
+  const nR = (road.route23.items || []).length + (road.route23.notes || []).length;
+  iw.closest(".panel").style.flexGrow = Math.min(12, 2 + nIw);
+  r23Panel.style.flexGrow = Math.min(12, 2 + nR);
+  fit(iw);
+
+  document.getElementById("r23Flag").textContent = staleFlag(road.route23.src);
+  const r = document.getElementById("r23");
+  const notes = (road.route23.notes || []).map(n => `<div class="notes">${esc(n)}</div>`).join("");
+  const caveat = hasMap
+    ? `<div class="caveat">事故・渋滞は下の地図の交通状況（Google）で確認。一覧は名古屋国道事務所の規制・緊急情報</div>`
+    : `<div class="caveat">一覧は名古屋国道事務所の規制・緊急情報（事故・渋滞の即時情報は含みません）</div>`;
+  r.innerHTML = notes + itemsHtml(road.route23.items || [], "規制・緊急情報はありません") + caveat;
+  fit(r);
+}
+
+/* ---------- フッター ---------- */
+function renderFooter(sources, now, has23){
+  const bad = sources.filter(s => s.stale);
+  const status = bad.length
+    ? bad.map(s => `<span class="s bad num">${esc(s.name)} 取得できていません（最終 ${s.updated ? hhmm(s.updated) : "--:--"}）</span>`).join("")
+    : `<span class="s num">データ取得 正常（${sources.length}系統）　最終確認 ${hhmm(now)}</span>`;
+  document.getElementById("footer").innerHTML =
+    (DEMO ? `<span class="demo">表示確認モード（ダミーデータ）</span>` : "") + status +
+    `<span class="src">出典：気象庁　JR東海　名古屋市交通局　名鉄　あおなみ線　NEXCO中日本${has23 ? "　名古屋国道事務所" : ""}</span>`;
+}
+
+/* ---------- 地図（Google Maps の交通状況。キー設定時のみ） ---------- */
+let hasMap = false;
+async function setupMap(){
+  try{
+    const cfg = await (await fetch("/api/config", {cache:"no-store"})).json();
+    if (!cfg.google_maps_api_key) return;
+    hasMap = true;
+    document.body.classList.add("hasmap");
+    window.initMap = () => {
+      const map = new google.maps.Map(document.getElementById("map"), {
+        disableDefaultUI:true, gestureHandling:"none", keyboardShortcuts:false, clickableIcons:false,
+        backgroundColor:"#0F2536",
+        styles:[
+          {elementType:"geometry",stylers:[{color:"#1b3547"}]},
+          {elementType:"labels.text.fill",stylers:[{color:"#c9d6de"}]},
+          {elementType:"labels.text.stroke",stylers:[{color:"#0f2536"}]},
+          {featureType:"water",elementType:"geometry",stylers:[{color:"#0c1f2d"}]},
+          {featureType:"poi",stylers:[{visibility:"off"}]},
+          {featureType:"transit",stylers:[{visibility:"off"}]},
+          {featureType:"road",elementType:"geometry",stylers:[{color:"#3a5466"}]},
+          {featureType:"road.highway",elementType:"geometry",stylers:[{color:"#5b7486"}]}
+        ]
+      });
+      // 東海JCT〜四日市（伊勢湾岸道と国道23号の並走区間）
+      map.fitBounds(new google.maps.LatLngBounds({lat:34.93,lng:136.58},{lat:35.10,lng:136.92}), 0);
+      const traffic = new google.maps.TrafficLayer();
+      traffic.setMap(map);
+      setInterval(() => { traffic.setMap(null); traffic.setMap(map); }, 5 * 60 * 1000);
+    };
+    const s = document.createElement("script");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(cfg.google_maps_api_key)}&callback=initMap&language=ja&region=JP`;
+    s.async = true;
+    document.head.appendChild(s);
+  }catch(e){ /* 地図なしで続行 */ }
+}
+
+/* ---------- 表示確認モード ---------- */
+function applyDemo(st){
+  const at = new Date(Date.now() - 12*60000).toISOString();
+  const A = Object.fromEntries(st.alerts.map(a => [a.id, a]));
+  Object.assign(A.quake_local, {level:"alarm", stale:false, lines:[
+    {main:"愛知県西部 震度5強、三重県北部 震度5弱", sub:"9/11 01:40　三重県南東沖 M7.9"},
+    {main:"長周期地震動 愛知県西部 階級3", sub:"9/11 01:40　三重県南東沖 M7.9"}]});
+  Object.assign(A.tsunami, {level:"alarm", stale:false, lines:[
+    {main:"大津波警報", sub:"伊勢・三河湾　予想される最大波 5m"},
+    {main:"津波警報", sub:"愛知県外海　予想される最大波 3m"}]});
+  Object.assign(A.lv5, {level:"caution", stale:false, lines:[{main:"レベル4土砂災害危険警報", sub:"三重県北中部（津市中西部、亀山市）"}]});
+  Object.assign(A.quake_national, {level:"alarm", stale:false, lines:[{main:"最大震度6強", sub:"9/11 01:40　三重県南東沖 M7.9"}]});
+  st.rail.jr.lines = (st.rail.jr.lines || []).map((l,i) => i===0 ? {...l, level:"stop", status:"運転見合わせ", detail:"地震の影響により、全線で運転を見合わせています。運転再開は安全確認後となる見込みです。"} :
+                                            {...l, level:"delay", status:"遅れ／運休あり", detail:"大府駅で、線路点検の影響により一部の列車に遅れが発生しています。"});
+  if (st.rail.subway.lines.length) st.rail.subway.lines[0] = {...st.rail.subway.lines[0], level:"stop", status:"運転見合わせ", detail:"全線　地震　安全確認のため全線で運転を見合わせています。"};
+  st.rail.meitetsu = {...st.rail.meitetsu, other:"", lines:(st.rail.meitetsu.lines || []).map((l,i) => i===0
+      ? {...l, level:"stop", status:"運転見合わせ", detail:"地震の影響により、名古屋本線 豊橋～名鉄岐阜間で運転を見合わせています"}
+      : i===2 ? {...l, level:"delay", status:"遅れあり", detail:"常滑線 太田川～中部国際空港間で最大20分の遅れが出ています"} : l)};
+  st.road.isewangan.items = [
+    {kind:"通行止", level:"stop", title:"東海JCT・IC→みえ川越IC", direction:"下り 西行", detail:"地震"},
+    {kind:"通行止", level:"stop", title:"みえ川越IC→東海JCT・IC", direction:"上り 東行", detail:"地震"},
+    {kind:"渋滞", level:"delay", title:"名古屋南JCT→東海JCT・IC", direction:"下り 西行", detail:"5km"},
+    {kind:"車線規制", level:"info", title:"湾岸長島PA付近", direction:"上り 東行", detail:"路肩規制　工事"}];
+  return st;
+}
+
+/* ---------- 更新ループ ---------- */
+async function refresh(){
+  try{
+    const res = await fetch("/api/status", {cache:"no-store"});
+    if (!res.ok) throw new Error(res.status);
+    let st = await res.json();
+    if (DEMO) st = applyDemo(st);
+    lastOk = Date.now();
+    renderAlerts(st.alerts);
+    renderRail(st.rail);
+    renderRoad(st.road, hasMap);
+    renderFooter(st.sources, st.now, !!st.road.route23);
+  }catch(e){ /* 次回に再試行（画面は前回の内容を保持） */ }
+}
+
+/* 長時間表示でブラウザが重くならないよう、6時間ごとに再読み込み（サーバー応答を確認してから） */
+setInterval(async () => {
+  try{ const r = await fetch("/api/config", {cache:"no-store"}); if (r.ok) location.reload(); }catch(e){}
+}, 6 * 3600 * 1000);
+
+window.addEventListener("resize", () => refresh());
+setupMap().finally(() => { refresh(); setInterval(refresh, POLL_MS); });
+</script>
+</body>
+</html>
