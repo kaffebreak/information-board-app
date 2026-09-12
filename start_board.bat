@@ -11,10 +11,10 @@ rem     PC reboot, and the browser then sits on an error page for good:
 rem     the page never loads, so its auto-refresh never runs.
 set /a _try=0
 :wait
-curl -s -o nul http://127.0.0.1:8765/api/config && goto ready
+curl -s -o nul --connect-timeout 1 http://127.0.0.1:8765/api/config && goto ready
 set /a _try+=1
 if %_try% geq 60 goto ready
-timeout /t 2 /nobreak >nul
+timeout /t 1 /nobreak >nul
 goto wait
 :ready
 
