@@ -28,7 +28,7 @@
 | 警報コード | — | Lv5：33大雨 39土砂 38高潮／Lv4：43 49 48／気象特別警報：35暴風 32暴風雪 36大雪 37波浪。気象庁サイトJS内の対応表から取得 |
 | 河川氾濫 | `bosai/flood/data/r8/flood_xml.json` | item.code 51/53=レベル5氾濫特別警報、40/41=レベル4。class10Codes で地域判定。**河川名のキーは未確認**（平常時は空配列で実物を見られていない） |
 | 地域 | `bosai/common/const/area.json` | class20→class15→class10。対象 class10：230010 230020 240010 |
-| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。1地震（eid）に 震度速報→震源に関する情報→震源・震度情報 と複数電文が入るので、`_final_reports()` で震度を持つ最新の電文を確定値にする（下方修正も反映。取消電文があれば地震ごと除外）。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部）。**461は他コードからの推定、実データ未確認**。詳細電文が取れないときは県単位（list.json の int[].code 23/24）で判定するため、三重県南部だけの震度5弱以上も「三重県（区域は確認中）」として発令表示になる（安全側の意図的な動作） |
+| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。1地震（eid）に 震度速報→震源に関する情報→震源・震度情報 と複数電文が入るので、`_final_reports()` で震度を持つ最新の電文を確定値にする（下方修正も反映。取消電文があれば地震ごと除外）。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部。2026-09-13 に461を含め全コード確認済み）。詳細電文が取れないときは県単位（list.json の int[].code 23/24）で判定するため、三重県南部だけの震度5弱以上も「三重県（区域は確認中）」として発令表示になる（安全側の意図的な動作） |
 | 長周期 | `bosai/ltpgm/data/list.json` | lg[].code / maxLg |
 | 津波 | `bosai/tsunami/data/list.json` ＋詳細 | 最新の VTSE41。Body.Tsunami.Forecast.Item[].Area.Name / Category.Kind.Name / MaxHeight.TsunamiHeight。対象：伊勢・三河湾、愛知県外海 |
 | JR東海 | `traininfo.jr-central.co.jp/zairaisen/data/trainInfo/json/unkou.json` | 平常時 events=null。events[].imp_line/status/cause、message_info[i].delivery_msg。路線マスタ `hp_senku_master_ja.json` |
@@ -47,7 +47,7 @@
 ## 未対応・要確認
 - [x] 名鉄の異常時HTML構造を確認し、線区判定を `ul.emListLine` ベースに変更（2026-09-11 の遅延時に実物を確認）
 - [ ] 河川氾濫の河川名キー（`flood_xml.json` は平常時 `[]`。発生時にしか確認できない）
-- [ ] 三重県中部 461：実データで 450 愛知県東部・451 愛知県西部・460 三重県北部・462 三重県南部を確認。並びから 461＝三重県中部はほぼ確実だが、461そのものの観測はまだ
+- [x] 三重県中部 461：実データで確認（2026-09-13）。`QUAKE_AREAS` の4コードはすべて裏付けが取れた
 - [ ] 国道23号（保留中。何を出すか未決）。情報源は 2026-09-11 に調査済みで上表のとおり。事故・渋滞のリアルタイムは Google地図の交通状況（`google_maps_api_key`、実装済み）以外に手段なし。国交省 道路情報提供システム `road-info-prvs.mlit.go.jp`（5〜10分更新）はデータが毎回変わる難読パスの下で壊れやすく不採用。三重県道路規制情報は県管理道路のみで23号は対象外
 - [x] ログのファイル出力（`board.log`。1MB×3世代でローテーション。2026-09-12）
 - [ ] PC起動時の自動実行の手順確認（`start_board.bat` はサーバーが応答するまで待つようにした。タスクスケジューラ／スタートアップへの登録手順は未確認）
