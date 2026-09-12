@@ -503,6 +503,20 @@ def rail_level(status_names):
 
 def src_jr() -> dict:
     master = JR_MASTER.get().get("lst", [])
+    # JRサイト自身が「提供停止（メンテナンス）」を出しているときは、その旨をそのまま出す
+    svc = get_json(bust(JR + "hp_service_jotai_kanri.json"), conditional=False)
+    if str((svc or {}).get("serviceJotai", "0")) != "0":
+        lines = []
+        for target in CFG["jr_lines"]:
+            nt = nfkc(target)
+            m = next((x for x in master
+                      if nfkc(f"{x['ryokakuSenkuMei']}({x['ryokakuSenkuKaishiShuryoEki']})") == nt
+                      or nfkc(x["ryokakuSenkuMei"]) == nt), None)
+            name = m["ryokakuSenkuMei"] if m else target.split("(")[0]
+            lines.append({"name": name, "sub": (m or {}).get("ryokakuSenkuKaishiShuryoEki", "") if name == "東海道線" else "",
+                          "code": (m or {}).get("ekiNumberKigobu", ""), "color": (m or {}).get("ryokakuSenkuColorCdchi", "#888"),
+                          "level": "offhours", "status": "情報提供停止中", "detail": ""})
+        return {"lines": lines, "info": "JR東海の運行情報はメンテナンスのため提供停止中です"}
     d = get_json(bust(JR + "trainInfo/json/unkou.json"), conditional=False)
     events = d.get("events") or []
     msgs = d.get("message_info") or []
@@ -575,8 +589,10 @@ def src_subway() -> dict:
         if level != "normal":
             detail = "　".join(v for v in (best.get("traffic_section"), best.get("traffic_cause"),
                                           best.get("traffic_message")) if v)
+        # 交通局は「平常運行」（バスと共通の言い方）。表示は鉄道各社に合わせて「平常運転」に統一する
+        status = "平常運転" if level == "normal" else (title or "運行情報あり")
         lines.append({"name": name, "code": SUBWAY_CODES.get(rid, ""), "color": SUBWAY_COLORS.get(rid, "#888"),
-                      "level": level, "status": title or "平常運行", "detail": detail})
+                      "level": level, "status": status, "detail": detail})
     return {"lines": lines}
 
 
@@ -599,14 +615,34 @@ def _em_table(block: str) -> dict:
     return rows
 
 
+def _em_items(part: str) -> list:
+    """表のセルから1件ずつ取り出す（<dt>/<li> 単位、<br> は別の件として分ける）"""
+    items = []
+    chunks = [m.group(2) for m in re.finditer(r"<(dt|li)\b[^>]*>(.*?)</\1>", part or "", re.S)] or [part or ""]
+    for chunk in chunks:
+        for piece in re.split(r"(?i)<br\s*/?>", chunk):
+            t = " ".join(strip_tags(piece).split())
+            if t and not MT_NOISE_RE.search(t) and t not in items:
+                items.append(t)
+    return items
+
+
+def _em_line_of(item: str) -> str:
+    """「三河線 土橋駅～上挙母駅間 人身事故」→「三河線」"""
+    m = re.match(r"(\S+?線)(?:\s|$)", item)
+    return m.group(1) if m else ""
+
+
 def _em_blocks(seg: str) -> list:
     """運行情報ページの異常時ブロックを読む
 
     平常時  <p class="emLv00">15分以上の列車の遅れはございません。</p>
     異常時  <div class="emInfo emLv02"> の中に
               <h2>遅延・一部運休</h2>                       … 状態
-              <ul class="emListLine"><li>名古屋本線</li>…   … 対象線区（線区判定はこれを使う）
-              表の「理由」「備考」                            … 事由・補足
+              <ul class="emListLine"><li>名古屋本線</li>…   … 対象線区（波及して遅れている線区も含む）
+              表の「理由」  <dt>三河線 土橋駅～上挙母駅間 人身事故</dt> … 事由（発生線区が先頭）
+              表の「備考」  <span>…再開しました。<br>…</span>             … 補足（1件ずつ<br>区切り）
+            振替輸送・バス代行は「路線」がなく「区間」の表になる
     """
     out = []
     for bm in re.finditer(r'class="emInfo\s+emLv(\d+)"(.*?)(?=class="emInfo\s+emLv\d+"|\Z)', seg, re.S):
@@ -615,23 +651,33 @@ def _em_blocks(seg: str) -> list:
         body = bm.group(2)
         hm = re.search(r"<h2[^>]*>(.*?)</h2>", body, re.S)
         rows = _em_table(body)
-        lm = re.search(r'<ul class="emListLine">(.*?)</ul>', rows.get("路線", body), re.S)
-        if lm:
-            names = [strip_tags(x) for x in re.findall(r"<li[^>]*>(.*?)</li>", lm.group(1), re.S)]
-        else:
-            names = strip_tags(rows.get("路線", "")).splitlines()
-        note = [ln for ln in strip_tags(rows.get("備考", "")).splitlines() if not MT_NOISE_RE.search(ln)]
+        names = []
+        if "路線" in rows:
+            lm = re.search(r'<ul class="emListLine">(.*?)</ul>', rows["路線"], re.S)
+            raw = re.findall(r"<li[^>]*>(.*?)</li>", lm.group(1), re.S) if lm else strip_tags(rows["路線"]).splitlines()
+            names = [n for n in (" ".join(strip_tags(x).split()) for x in raw) if n]
         out.append({
             "state": " ".join(strip_tags(hm.group(1)).split()) if hm else "運行情報あり",
-            "names": [n for n in (x.strip() for x in names) if n],
-            "reason": "　".join(strip_tags(rows.get("理由", "")).splitlines()),
-            "note": "　".join(note),
+            "names": names,
+            "reasons": _em_items(rows.get("理由", "")),
+            "notes": _em_items(rows.get("備考", "")),
+            "sections": _em_items(rows.get("区間", "")),
         })
     return out
 
 
+def _cause_short(item: str) -> str:
+    """「三河線 土橋駅～上挙母駅間 人身事故」→「三河線 人身事故」"""
+    parts = item.split()
+    return f"{parts[0]} {parts[-1]}" if len(parts) >= 2 else item
+
+
 def src_meitetsu() -> dict:
-    """名鉄は線区別のデータがないため、運行情報ページのHTML構造から読み取る"""
+    """名鉄は線区別のデータがないため、運行情報ページのHTML構造から読み取る
+
+    「路線」には事故の起きた線区だけでなく、直通運転で遅れが波及した線区も並ぶ。
+    表示線区ごとに、事由がその線区のものか（直接）、他線区からの波及かを分けて出す。
+    """
     h = get_text(bust("https://top.meitetsu.co.jp/em/"), conditional=False)
     m = re.search(r'<div class="layEm">(.*?)<div class="wrapEmAdd01"', h, re.S)
     if not m:
@@ -644,35 +690,59 @@ def src_meitetsu() -> dict:
         raise RuntimeError("名鉄の運行情報を読み取れません（ページ構造の変更）")
 
     targets = [x for x in (CFG.get("meitetsu_lines") or []) if x]
+    is_target = lambda ln: bool(ln) and any(t in ln or ln in t for t in targets)
+    # 名鉄サイトは 0:31〜4:59 に平常ページの文言を「提供時間は5:00〜0:30」に差し替える。同じ判定をする
+    now = now_jst()
+    off_hours = (1 <= now.hour < 5) or (now.hour == 0 and now.minute > 30)
     lines = []
     for name in targets:
         row = {"name": name, "code": MEITETSU_CODES.get(name, ""), "color": "#E60012",
                "level": "normal", "status": "平常運転", "detail": ""}
-        hit = next((b for b in blocks if any(n == "全線" or name in n for n in b["names"])), None)
-        if hit:
-            stop = bool(STOP_RE.search(hit["state"]) or STOP_RE.search(hit["reason"]))
-            row.update(level="stop" if stop else "delay", status=hit["state"],
-                       detail="　".join(v for v in (hit["reason"], hit["note"]) if v)[:300])
+        hits = [b for b in blocks if any(n == "全線" or name in n for n in b["names"])]
+        if off_hours and not blocks:
+            row.update(level="offhours", status="情報提供時間外")
+        elif hits:
+            stop = any(STOP_RE.search(b["state"]) for b in hits)
+            direct = [r for b in hits for r in b["reasons"] if name in _em_line_of(r) or _em_line_of(r) == "全線"]
+            own_notes = [n for b in hits for n in b["notes"] if name in _em_line_of(n)]
+            if direct:
+                detail = "　".join(dict.fromkeys(direct + own_notes))
+                stop = stop or any(STOP_RE.search(x) for x in direct)
+            else:  # 他線区で起きた事由の波及
+                causes = [_cause_short(r) for b in hits for r in b["reasons"]]
+                detail = ("、".join(dict.fromkeys(causes)) + "の影響") if causes else ""
+                if own_notes:
+                    detail = "　".join([detail] + own_notes) if detail else "　".join(own_notes)
+            row.update(level="stop" if stop else "delay", status=hits[0]["state"], detail=detail[:200])
         lines.append(row)
 
-    # 表示していない線区の異常も、1行にまとめて知らせる
-    msgs, others = [], []
+    msgs = []
+    # 表示していない線区で起きた事由（波及元の場所が分かるように1回だけ出す）
+    other_reasons = [r for b in blocks for r in b["reasons"] if not is_target(_em_line_of(r))]
+    affected_targets = any(l["level"] != "normal" for l in lines)
+    if other_reasons:
+        shown = list(dict.fromkeys(other_reasons))
+        msgs.append(("事由：" if affected_targets else "表示中以外の線区：") + "／".join(shown[:3]) + (" ほか" if len(shown) > 3 else ""))
+    elif not affected_targets:
+        others = [n for b in blocks for n in b["names"] if n != "全線" and not is_target(n)]
+        if others:
+            others = list(dict.fromkeys(others))
+            msgs.append("表示中以外の線区で遅れ・運休があります（%s）" % "・".join(others[:8] + (["ほか"] if len(others) > 8 else [])))
+    # 振替輸送・バス代行など（終了済みの区間は出さない）
     for b in blocks:
-        for n in b["names"]:
-            if n != "全線" and not any(t in n for t in targets) and n not in others:
-                others.append(n)
-        if not b["names"]:  # 線区の指定がない全体向けの情報
-            msgs.append("　".join(v for v in (b["state"], b["reason"]) if v))
-    if others:
-        shown = others[:8] + (["ほか"] if len(others) > 8 else [])
-        msgs.insert(0, "表示中以外の線区で遅れ・運休があります（%s）" % "・".join(shown))
+        if b["names"]:
+            continue
+        live = [x for x in (b["sections"] or b["notes"] or b["reasons"]) if "終了" not in x]
+        if live:
+            msgs.append(f"{b['state']}：" + "／".join(live[:3]) + (" ほか" if len(live) > 3 else ""))
 
     notice = ""
     try:
         notice = strip_tags(get_text(bust("https://top.meitetsu.co.jp/tokudashi/tokudashi.html"), conditional=False)).strip()
     except Exception:
         pass
-    return {"lines": lines, "other": " / ".join(x for x in msgs if x)[:300], "notice": notice[:300]}
+    info = "名鉄の運行情報の提供時間は 5:00〜0:30 です" if (off_hours and not blocks) else ""
+    return {"lines": lines, "other": " ／ ".join(msgs)[:300], "info": info, "notice": notice[:300]}
 
 
 def src_aonami() -> dict:
@@ -1028,7 +1098,7 @@ def build_status() -> dict:
         "now": iso(now_jst()),
         "alerts": build_alerts(),
         "rail": {
-            "jr": {"lines": jr.get("lines", []), "src": sjr},
+            "jr": {"lines": jr.get("lines", []), "info": jr.get("info", ""), "src": sjr},
             "subway": {"lines": sub.get("lines", []), "src": ssub},
             "meitetsu": dict(mt, src=smt),
             "aonami": dict(ao, src=sao),

@@ -86,6 +86,7 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .group>.gh{font-size:.95em;color:var(--mute);margin-bottom:.3em;display:flex;gap:.8em}
 .group>.gh .flag{margin-left:auto;color:var(--caution)}
 .group .other{font-size:.95em;color:var(--caution);padding:.3em 0}
+.group .info{font-size:.9em;color:var(--mute);padding:.3em 0}
 .rows{display:grid;grid-template-columns:1fr}
 .row{display:flex;align-items:center;gap:.6em;padding:.32em 0;border-bottom:1px solid var(--rule);min-width:0}
 .row.wide{grid-column:1/-1;flex-wrap:wrap}
@@ -102,6 +103,9 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .row.stop .st::before{background:var(--alarm)}
 .row.unknown .st{color:var(--stale)}
 .row.unknown .st::before{background:var(--stale)}
+/* 情報提供時間外・提供停止中：サイト側がそう出しているときの表示（異常ではない） */
+.row.offhours .st{color:var(--mute)}
+.row.offhours .st::before{background:transparent;box-shadow:inset 0 0 0 .13em var(--stale)}
 .row .dt{flex-basis:100%;font-size:.98em;line-height:1.4;color:#D5DEE3;padding-left:2.7em;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .tight .row{padding:.2em 0}
@@ -247,7 +251,7 @@ function renderAlerts(alerts){
 
 /* ---------- 鉄道 ---------- */
 function railRow(l, wideIfAbnormal = true){
-  const abn = l.level !== "normal" && l.level !== "unknown";
+  const abn = !["normal", "unknown", "offhours"].includes(l.level);
   const chip = l.code
     ? `<span class="chip" style="border-color:${esc(l.color)}">${esc(l.code)}</span>`
     : `<span class="chip blank" style="background:${esc(l.color)}"></span>`;
@@ -265,11 +269,13 @@ function renderRail(rail){
   const mt = rail.meitetsu;
   const el = document.getElementById("rail");
   el.innerHTML = `<div class="rcol">` +
-    g("JR東海", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    g("JR東海", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+      (rail.jr.info ? `<div class="info">${esc(rail.jr.info)}</div>` : "")) +
     g("名古屋市営地下鉄", rail.subway.src, `<div class="rows">${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
     `</div><div class="rcol">` +
     g("名鉄", mt.src, `<div class="rows">${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
       (mt.other ? `<div class="other">${esc(mt.other)}</div>` : "") +
+      (mt.info ? `<div class="info">${esc(mt.info)}</div>` : "") +
       (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
     g("あおなみ線", rail.aonami.src, `<div class="rows">${railRow(aonami)}</div>`) + `</div>`;
   fit(el);
