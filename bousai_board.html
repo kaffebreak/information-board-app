@@ -33,6 +33,11 @@ header{display:flex;align-items:center;gap:1.4vw;padding:0 1.2vw;border-radius:.
 header h1{margin:0;font-size:1.6rem;font-weight:700;letter-spacing:.06em}
 header .state{font-size:1.15rem;color:var(--mute)}
 header .clock{margin-left:auto;font-size:2.35rem;font-weight:700;letter-spacing:.02em}
+/* BIZ UDPゴシックは数字の字幅が可変で「1」だけ細く、秒が進むたび時計の位置がずれる。
+   このフォントは tnum 機能を持たないため font-variant-numeric では揃わない。等幅の
+   BIZ UDゴシックに替えると数字が半角幅になって細く見えるので、書体はそのままにして
+   数字1文字ぶんの枠（1ch＝「0」の字幅）に入れて位置を固定する */
+header .clock .d{display:inline-block;width:1ch;text-align:center}
 header .clock small{font-size:.55em;font-weight:400;color:var(--mute);margin-right:.8em}
 body.alarm header{background:var(--alarm)}
 body.alarm header .state{color:#fff;font-weight:700;font-size:1.3rem}
@@ -55,8 +60,9 @@ body.noconn header .conn{display:inline-block}
 @keyframes pulse{50%{box-shadow:0 0 .2em #FF5A5F,0 0 0 .2em #fff inset}}
 @media (prefers-reduced-motion:reduce){.tile.alarm .lamp{animation:none}}
 .tile .title{font-size:1.38em;font-weight:700;white-space:nowrap}
-.tile .scope{font-size:.95em;color:var(--mute);margin-top:.35em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tile .crit{font-size:.95em;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .scope{font-size:.95em;color:var(--mute);margin-top:.45em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 対象地域（scope）と発令条件（crit）は別の情報なので、詰めずに1行分あける */
+.tile .crit{font-size:.95em;color:var(--mute);margin-top:.35em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile.alarm .scope,.tile.alarm .crit{color:#F5C9CB}
 .tile .body{flex:1;min-height:0;overflow:hidden;margin-top:.6em;font-size:1rem}
 .tile .verdict{font-size:1.25em;color:var(--mute)}
@@ -90,7 +96,9 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .rows{display:grid;grid-template-columns:1fr}
 .row{display:flex;align-items:center;gap:.6em;padding:.32em 0;border-bottom:1px solid var(--rule);min-width:0}
 .row.wide{grid-column:1/-1;flex-wrap:wrap}
-.chip{flex:none;min-width:2.1em;height:1.55em;padding:0 .25em;border-radius:.3em;border:.16em solid;display:grid;place-items:center;
+/* min-width は全記号（NH KC TA CA CE M …）が収まる値にする。足りないと文字幅の差がそのまま
+   チップ幅の差になり、右の路線名の開始位置が揃わない */
+.chip{flex:none;min-width:2.6em;height:1.55em;padding:0 .25em;border-radius:.3em;border:.16em solid;display:grid;place-items:center;
   font-size:.85em;font-weight:700;background:#fff;color:#222}
 .chip.blank{border-width:0}
 .row .nm{font-size:1.15em;font-weight:700;white-space:nowrap}
@@ -187,8 +195,11 @@ function jst(d){ return new Date(d.getTime() + (d.getTimezoneOffset() + 540) * 6
 function tick(){
   const d = jst(new Date());
   const p = n => String(n).padStart(2,"0");
+  /* 数字だけ固定幅の枠に入れる（コロンはそのまま） */
+  const cells = s => [...s].map(ch => /[0-9]/.test(ch) ? `<span class="d">${ch}</span>` : ch).join("");
   document.getElementById("clock").innerHTML =
-    `<small>${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${WD[d.getDay()]})</small>${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    `<small>${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${WD[d.getDay()]})</small>` +
+    cells(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
   document.body.classList.toggle("noconn", Date.now() - lastOk > 60000);
 }
 setInterval(tick, 1000); tick();
@@ -269,11 +280,11 @@ function renderRail(rail){
   const mt = rail.meitetsu;
   const el = document.getElementById("rail");
   el.innerHTML = `<div class="rcol">` +
-    g("JR東海", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("JR線", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
       (rail.jr.info ? `<div class="info">${esc(rail.jr.info)}</div>` : "")) +
-    g("名古屋市営地下鉄", rail.subway.src, `<div class="rows">${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    g("地下鉄線", rail.subway.src, `<div class="rows">${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
     `</div><div class="rcol">` +
-    g("名鉄", mt.src, `<div class="rows">${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("名鉄線", mt.src, `<div class="rows">${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
       (mt.other ? `<div class="other">${esc(mt.other)}</div>` : "") +
       (mt.info ? `<div class="info">${esc(mt.info)}</div>` : "") +
       (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
@@ -325,7 +336,8 @@ function renderFooter(sources, now, has23){
     : `<span class="s num">データ取得 正常（${sources.length}系統）　最終確認 ${hhmm(now)}</span>`;
   document.getElementById("footer").innerHTML =
     (DEMO ? `<span class="demo">表示確認モード（ダミーデータ）</span>` : "") + status +
-    `<span class="src">出典：気象庁　JR東海　名古屋市交通局　名鉄　あおなみ線　NEXCO中日本${has23 ? "　名古屋国道事務所" : ""}</span>`;
+    // 出典は正式名称で書く（あおなみ線の運営は「名古屋臨海高速鉄道」。貨物専業の「名古屋臨海鉄道」とは別会社）
+    `<span class="src">出典：気象庁　東海旅客鉄道　名古屋市交通局　名古屋鉄道　名古屋臨海高速鉄道　中日本高速道路${has23 ? "　名古屋国道事務所" : ""}</span>`;
 }
 
 /* ---------- 地図（Google Maps の交通状況。キー設定時のみ） ---------- */
