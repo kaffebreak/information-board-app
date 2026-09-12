@@ -28,12 +28,12 @@
 | 警報コード | — | Lv5：33大雨 39土砂 38高潮／Lv4：43 49 48／気象特別警報：35暴風 32暴風雪 36大雪 37波浪。気象庁サイトJS内の対応表から取得 |
 | 河川氾濫 | `bosai/flood/data/r8/flood_xml.json` | item.code 51/53=レベル5氾濫特別警報、40/41=レベル4。class10Codes で地域判定。**河川名のキーは未確認**（平常時は空配列で実物を見られていない） |
 | 地域 | `bosai/common/const/area.json` | class20→class15→class10。対象 class10：230010 230020 240010 |
-| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部）。**461は他コードからの推定、実データ未確認**。詳細電文が取れないときは県単位（list.json の int[].code 23/24）で判定するため、三重県南部だけの震度5弱以上も「三重県（区域は確認中）」として発令表示になる（安全側の意図的な動作） |
+| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。1地震（eid）に 震度速報→震源に関する情報→震源・震度情報 と複数電文が入るので、`_final_reports()` で震度を持つ最新の電文を確定値にする（下方修正も反映。取消電文があれば地震ごと除外）。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部）。**461は他コードからの推定、実データ未確認**。詳細電文が取れないときは県単位（list.json の int[].code 23/24）で判定するため、三重県南部だけの震度5弱以上も「三重県（区域は確認中）」として発令表示になる（安全側の意図的な動作） |
 | 長周期 | `bosai/ltpgm/data/list.json` | lg[].code / maxLg |
 | 津波 | `bosai/tsunami/data/list.json` ＋詳細 | 最新の VTSE41。Body.Tsunami.Forecast.Item[].Area.Name / Category.Kind.Name / MaxHeight.TsunamiHeight。対象：伊勢・三河湾、愛知県外海 |
 | JR東海 | `traininfo.jr-central.co.jp/zairaisen/data/trainInfo/json/unkou.json` | 平常時 events=null。events[].imp_line/status/cause、message_info[i].delivery_msg。路線マスタ `hp_senku_master_ja.json` |
 | 地下鉄 | `kotsu.city.nagoya.jp/datas/latest_traffic.json` | rosen_id（M_LINE＝名城・名港）、icon_cd N/W/C/E |
-| 名鉄 | `top.meitetsu.co.jp/em/`（HTML） | JSONなし。平常は `p.emLv00`「15分以上の列車の遅れはございません。」。異常時は `div.emInfo.emLv02` の中に h2＝状態、`ul.emListLine>li`＝対象線区、表の「路線／理由／備考」。線区判定は emListLine を使う（文章マッチは誤検知するので戻さない）。どちらも無ければ構造変更とみなして例外。提供時間外（0:31〜4:59）の文言差し替えは**ページ内JSが `#descriptionText` を書き換えているだけ**で取得HTMLには出ないため、JSと同じ条件を `off_hours` で判定する（2026-09-13 実物で確認） |
+| 名鉄 | `top.meitetsu.co.jp/em/`（HTML） | JSONなし。平常は `p.emLv00`「15分以上の列車の遅れはございません。」。異常時は `div.emInfo.emLvNN` の中に h2＝状態、`ul.emListLine>li`＝対象線区、表の「路線／理由／備考」。レベルは CSS の定義で 01 運転見合せ／02 遅延・一部運休／03 振替輸送／04 バス代行輸送／05 その他（2026-09-13 `em/css/basic.css` で確認）。**停止判定はレベル番号 01 で行う**（名鉄は「見合せ」と送り仮名なしで書くため文言判定は保険扱い）。線区判定は emListLine を使う（文章マッチは誤検知するので戻さない）。どちらも無ければ構造変更とみなして例外。提供時間外（0:31〜4:59）の文言差し替えは**ページ内JSが `#descriptionText` を書き換えているだけ**で取得HTMLには出ないため、JSと同じ条件を `off_hours` で判定する（2026-09-13 実物で確認） |
 | あおなみ線 | `aonamiline.co.jp/railinfo`（HTML） | `table.delay_table` の td |
 | 伊勢湾岸道 | `ihighway.jp/datas/json/traffic.json` | NEXCO中日本。trafficInfo/otherTrafficInfo のカテゴリ別。区間判定は `icInfoApp.json` の pointX（東海JCT 5489〜みえ川越 5278）と、イベントの coordinate または題名のIC名。フィールドは jam が `distance`(km)・`passing.section`/`passing.time`・`title`(渋滞先頭)、規制系が `detail`＋`reason`、その他は `title`＋`reason` |
 | 国道23号 愛知側（保留） | `cbr.mlit.go.jp/meikoku/cms/{kisei,kinkyu}/?view=index` | 名古屋国道事務所。事故・渋滞は含まない。JARTIC は規約面で採用せず |

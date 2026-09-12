@@ -288,60 +288,67 @@ def class10_of(code: str, area: dict):
     return None
 
 
+def _final_reports(lst, has_data) -> list:
+    """list.json（1地震に複数の電文）を地震ごとにまとめ、最終報を採用する
+
+    同じ eid に 震度速報 → 震源に関する情報 → 震源・震度情報 と続報が入り、震度は後の電文で
+    修正されることがある。判定に使う値（震度・階級）を持つ最新の電文を確定値とし、それより
+    新しい取消電文があれば誤報の取り消しとみなして地震ごと外す。
+    震源名とマグニチュードは持っている最新の電文から取る（震度速報には無い）。
+    返り値: [{"eid", "at", "anm", "mag", "final": 採用した電文}]（発生の新しい順）
+    """
+    by = {}
+    for x in lst:
+        by.setdefault(x.get("eid") or x.get("json"), []).append(x)
+    events = []
+    for eid, reps in by.items():
+        reps.sort(key=lambda x: x.get("rdt") or "", reverse=True)
+        final = None
+        for x in reps:  # 新しい順
+            if x.get("ift") == "取消":
+                break
+            if has_data(x):
+                final = x
+                break
+        if final is None:
+            continue
+        t = parse_iso(final.get("at")) or parse_iso(final.get("rdt"))
+        if t is None:
+            continue
+        events.append({"eid": eid, "at": t, "final": final,
+                       "anm": next((x["anm"] for x in reps if x.get("anm")), ""),
+                       "mag": next((x["mag"] for x in reps if x.get("mag")), "")})
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return events
+
+
 def src_quake() -> dict:
     lst = get_json(JMA + "quake/data/list.json")
     now = now_jst()
     hold = dt.timedelta(hours=float(CFG["quake_hold_hours"]))
 
-    events, order = {}, []
-    for x in lst:  # 新しい順
-        t = parse_iso(x.get("at")) or parse_iso(x.get("rdt"))
-        if t is None:
-            continue
-        eid = x.get("eid") or x.get("json")
-        ev = events.get(eid)
-        if ev is None:
-            ev = {"eid": eid, "at": t, "anm": "", "mag": "", "maxi": "", "reports": []}
-            events[eid] = ev
-            order.append(eid)
-        if not ev["anm"] and x.get("anm"):
-            ev["anm"] = x["anm"]
-        if not ev["mag"] and x.get("mag"):
-            ev["mag"] = x["mag"]
-        if irank(x.get("maxi")) > irank(ev["maxi"]):
-            ev["maxi"] = x.get("maxi")
-        ev["reports"].append(x)
-
     national, local = [], []
     latest_any = latest_local = None
-    for eid in order:
-        ev = events[eid]
-        base = {"at": iso(ev["at"]), "anm": ev["anm"], "mag": ev["mag"], "maxi": ev["maxi"]}
-        if latest_any is None and irank(ev["maxi"]) > 0:
+    for ev in _final_reports(lst, lambda x: bool(x.get("maxi") or x.get("int"))):
+        fin = ev["final"]
+        base = {"at": iso(ev["at"]), "anm": ev["anm"], "mag": ev["mag"], "maxi": fin.get("maxi") or ""}
+        prefs = [p for p in fin.get("int") or [] if p.get("code") in ("23", "24")]
+        if latest_any is None and irank(base["maxi"]) > 0:
             latest_any = base
-        if latest_local is None:
-            for x in ev["reports"]:
-                ints = [p for p in x.get("int") or [] if p.get("code") in ("23", "24")]
-                if ints:
-                    best = max(ints, key=lambda p: irank(p.get("maxi")))
-                    latest_local = dict(base, pref=("愛知県" if best["code"] == "23" else "三重県"), pref_maxi=best.get("maxi"))
-                    break
+        if latest_local is None and prefs:
+            best = max(prefs, key=lambda p: irank(p.get("maxi")))
+            latest_local = dict(base, pref=("愛知県" if best["code"] == "23" else "三重県"), pref_maxi=best.get("maxi"))
         if now - ev["at"] > hold:
             continue
-        if irank(ev["maxi"]) >= INT_RANK["6-"]:
+        if irank(base["maxi"]) >= INT_RANK["6-"]:
             national.append(base)
 
-        # 愛知県・三重県北中部で震度5弱以上か
-        cand = None
-        for x in ev["reports"]:
-            if any(p.get("code") in ("23", "24") and irank(p.get("maxi")) >= INT_RANK["5-"] for p in x.get("int") or []):
-                cand = x
-                break
-        if not cand:
+        # 愛知県・三重県北中部で震度5弱以上か（最終報の値で判定）
+        if not any(irank(p.get("maxi")) >= INT_RANK["5-"] for p in prefs):
             continue
         areas = []
         try:
-            d = get_detail(JMA + "quake/data/" + cand["json"])
+            d = get_detail(JMA + "quake/data/" + fin["json"])
             obs = ((d.get("Body") or {}).get("Intensity") or {}).get("Observation") or {}
             for pref in as_list(obs.get("Pref")):
                 for a in as_list(pref.get("Area")):
@@ -349,7 +356,7 @@ def src_quake() -> dict:
                         areas.append({"name": a.get("Name") or QUAKE_AREAS[a["Code"]], "int": a.get("MaxInt")})
         except Exception as e:
             log.warning("地震詳細の取得に失敗: %s", e)
-            for p in cand.get("int") or []:
+            for p in prefs:
                 if irank(p.get("maxi")) >= INT_RANK["5-"]:
                     if p.get("code") == "23":
                         areas.append({"name": "愛知県", "int": p.get("maxi")})
@@ -365,22 +372,17 @@ def src_ltpgm() -> dict:
     lst = get_json(JMA + "ltpgm/data/list.json")
     now = now_jst()
     hold = dt.timedelta(hours=float(CFG["quake_hold_hours"]))
-    hits, seen = [], set()
-    for x in lst:
-        t = parse_iso(x.get("at")) or parse_iso(x.get("rdt"))
-        if t is None or now - t > hold:
-            continue
-        eid = x.get("eid")
-        if eid in seen:
+    hits = []
+    for ev in _final_reports(lst, lambda x: x.get("lg") is not None):
+        if now - ev["at"] > hold:
             continue
         areas = []
-        for g in x.get("lg") or []:
+        for g in ev["final"].get("lg") or []:
             lg = str(g.get("maxLg") or "0")
             if g.get("code") in QUAKE_AREAS and lg.isdigit() and int(lg) >= 3:
                 areas.append({"name": QUAKE_AREAS[g["code"]], "lg": lg})
         if areas:
-            seen.add(eid)
-            hits.append({"at": iso(t), "anm": x.get("anm", ""), "mag": x.get("mag", ""), "areas": areas})
+            hits.append({"at": iso(ev["at"]), "anm": ev["anm"], "mag": ev["mag"], "areas": areas})
     return {"hits": hits}
 
 
@@ -557,9 +559,10 @@ def src_jr() -> dict:
             text = "　".join(v for v in ((st[0] if st else ""), msg, extra) if v)
             if text:
                 details.append(text)
-        lines.append(dict(base, level=rail_level(statuses),
-                          status=statuses[0] if statuses else "平常運転",
-                          detail=" / ".join(details)))
+        # 同じ路線に「遅れ」と「運転見合わせ」が並ぶことがある。level（見合わせがあれば stop）と
+        # 表示する status が食い違わないよう、見合わせを優先する
+        status = next((s for s in statuses if "見合わせ" in s), statuses[0] if statuses else "平常運転")
+        lines.append(dict(base, level=rail_level(statuses), status=status, detail=" / ".join(details)))
     return {"lines": lines}
 
 
@@ -605,8 +608,13 @@ MEITETSU_CODES = {"名古屋本線": "NH", "常滑線": "TA", "河和線": "KC",
 MEITETSU_LINES = ("名古屋本線", "豊川線", "西尾線", "蒲郡線", "三河線", "豊田線", "常滑線", "空港線", "築港線",
                   "河和線", "知多新線", "犬山線", "各務原線", "広見線", "小牧線", "津島線", "尾西線", "竹鼻線",
                   "羽島線", "瀬戸線")
-# 「一部運休」は遅延として扱うため、運転見合わせの判定に「運休」は入れない
-STOP_RE = re.compile(r"見合わせ|不通")
+# 完全に止まっていれば赤（stop）、一部運休・遅れ・運転再開など動いていれば黄（delay）。
+# 各社自身の分類に合わせている（2026-09-13 に各社サイトの語彙を確認）：
+#   JR東海  運転見合わせ ／ 遅れあり・運休あり・遅れ・運休あり（JRのサイトも「運休あり」は遅延側に集約）
+#   名鉄    emLv01「運転見合せ」 ／ emLv02「遅延・一部運休」（名鉄は「見合せ」と送り仮名なしで書く）
+#   あおなみ線  自由文「全区間において運転を見合わせております」
+# よって「運休」は赤の条件に入れない。「見合せ／見合わせ」の表記ゆれは吸収する
+STOP_RE = re.compile(r"見合わ?せ|不通")
 # 備考欄の定型文（画面に出しても判断材料にならない）
 MT_NOISE_RE = re.compile(r"列車走行位置|特別車両券|払いもどし|ご利用の駅によっては|をご覧ください|をご確認ください")
 
@@ -661,6 +669,8 @@ def _em_blocks(seg: str) -> list:
               表の「理由」  <dt>三河線 土橋駅～上挙母駅間 人身事故</dt> … 事由（発生線区が先頭）
               表の「備考」  <span>…再開しました。<br>…</span>             … 補足（1件ずつ<br>区切り）
             振替輸送・バス代行は「路線」がなく「区間」の表になる
+    レベル番号（名鉄の CSS の定義。停止判定はこれを優先する）
+            01 運転見合せ  02 遅延・一部運休  03 振替輸送  04 バス代行輸送  05 その他項目欄
     """
     out = []
     for bm in re.finditer(r'class="emInfo\s+emLv(\d+)"(.*?)(?=class="emInfo\s+emLv\d+"|\Z)', seg, re.S):
@@ -675,6 +685,7 @@ def _em_blocks(seg: str) -> list:
             raw = re.findall(r"<li[^>]*>(.*?)</li>", lm.group(1), re.S) if lm else strip_tags(rows["路線"]).splitlines()
             names = [n for n in (" ".join(strip_tags(x).split()) for x in raw) if n]
         out.append({
+            "level": bm.group(1),
             "state": " ".join(strip_tags(hm.group(1)).split()) if hm else "運行情報あり",
             "names": names,
             "reasons": _em_items(rows.get("理由", "")),
@@ -682,6 +693,11 @@ def _em_blocks(seg: str) -> list:
             "sections": _em_items(rows.get("区間", "")),
         })
     return out
+
+
+def _em_stop(block: dict) -> bool:
+    """ブロックが運転見合せか。名鉄のレベル番号（emLv01）を優先し、見出しの文言は保険"""
+    return block.get("level") == "01" or bool(STOP_RE.search(block["state"]))
 
 
 def _cause_short(item: str) -> str:
@@ -721,13 +737,13 @@ def src_meitetsu() -> dict:
         row = {"name": name, "code": MEITETSU_CODES.get(name, ""), "color": "#E60012",
                "level": "normal", "status": "平常運転", "detail": ""}
         hits = [b for b in blocks if any(n == "全線" or name in n for n in b["names"])]
-        # 同じ線区が「運転見合わせ」と「遅延」の両方に載ることがある。深刻な方を先頭にして、
+        # 同じ線区が「運転見合せ」と「遅延」の両方に載ることがある。深刻な方を先頭にして、
         # status（先頭ブロックの見出し）と level（全ブロックのOR）が食い違わないようにする
-        hits.sort(key=lambda b: 0 if STOP_RE.search(b["state"]) else 1)
+        hits.sort(key=lambda b: 0 if _em_stop(b) else 1)
         if off_hours and not blocks:
             row.update(level="offhours", status="情報提供時間外")
         elif hits:
-            stop = any(STOP_RE.search(b["state"]) for b in hits)
+            stop = any(_em_stop(b) for b in hits)
             direct = [r for b in hits for r in b["reasons"] if name in _em_line_of(r) or _em_line_of(r) == "全線"]
             own_notes = [n for b in hits for n in b["notes"] if name in _em_line_of(n)]
             if direct:
@@ -793,7 +809,7 @@ def src_aonami() -> dict:
     if not text:
         raise RuntimeError("あおなみ線の運行情報を読み取れません（ページ構造の変更）")
     normal = "平常通り" in text
-    level = "normal" if normal else ("stop" if re.search(r"見合わせ|運休|不通", text) else "delay")
+    level = "normal" if normal else ("stop" if STOP_RE.search(text) else "delay")
     return {"level": level, "status": "平常運転" if normal else (text.split("\n")[0][:40] or "情報なし"),
             "detail": "" if normal else " ".join(text.split("\n"))[:300]}
 
