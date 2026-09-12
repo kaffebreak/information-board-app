@@ -730,9 +730,11 @@ def src_meitetsu() -> dict:
         lines.append(row)
 
     msgs = []
-    # 表示していない線区で起きた事由（波及元の場所が分かるように1回だけ出す）
-    other_reasons = [r for b in blocks for r in b["reasons"] if not is_target(_em_line_of(r))]
     affected_targets = any(l["level"] != "normal" for l in lines)
+    # 表示していない線区で起きた事由（波及元の場所が分かるように1回だけ出す）
+    # 線区名で始まらない事由は、影響を受けた線区の行にそのまま出しているので繰り返さない
+    other_reasons = [r for b in blocks for r in b["reasons"]
+                     if not is_target(_em_line_of(r)) and (_em_line_of(r) or not affected_targets)]
     if other_reasons:
         shown = list(dict.fromkeys(other_reasons))
         msgs.append(("事由：" if affected_targets else "表示中以外の線区：") + "／".join(shown[:3]) + (" ほか" if len(shown) > 3 else ""))
