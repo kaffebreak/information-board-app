@@ -302,7 +302,8 @@ def _final_reports(lst, has_data) -> list:
         by.setdefault(x.get("eid") or x.get("json"), []).append(x)
     events = []
     for eid, reps in by.items():
-        reps.sort(key=lambda x: x.get("rdt") or "", reverse=True)
+        # 発表時刻が同じ電文があるので、取消を先に見るところまで決めておく（並び順で結果が変わらないように）
+        reps.sort(key=lambda x: (x.get("rdt") or "", x.get("ift") == "取消"), reverse=True)
         final = None
         for x in reps:  # 新しい順
             if x.get("ift") == "取消":
