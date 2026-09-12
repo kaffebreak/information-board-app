@@ -28,7 +28,7 @@
 | 警報コード | — | Lv5：33大雨 39土砂 38高潮／Lv4：43 49 48／気象特別警報：35暴風 32暴風雪 36大雪 37波浪。気象庁サイトJS内の対応表から取得 |
 | 河川氾濫 | `bosai/flood/data/r8/flood_xml.json` | item.code 51/53=レベル5氾濫特別警報、40/41=レベル4。class10Codes で地域判定。**河川名のキーは未確認**（平常時は空配列で実物を見られていない） |
 | 地域 | `bosai/common/const/area.json` | class20→class15→class10。対象 class10：230010 230020 240010 |
-| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部）。**461は他コードからの推定、実データ未確認** |
+| 地震 | `bosai/quake/data/list.json` ＋詳細JSON | maxi は "5-" 形式。三重は詳細電文の Area.Code で判定（450愛知東部 451愛知西部 460三重北部 461三重中部）。**461は他コードからの推定、実データ未確認**。詳細電文が取れないときは県単位（list.json の int[].code 23/24）で判定するため、三重県南部だけの震度5弱以上も「三重県（区域は確認中）」として発令表示になる（安全側の意図的な動作） |
 | 長周期 | `bosai/ltpgm/data/list.json` | lg[].code / maxLg |
 | 津波 | `bosai/tsunami/data/list.json` ＋詳細 | 最新の VTSE41。Body.Tsunami.Forecast.Item[].Area.Name / Category.Kind.Name / MaxHeight.TsunamiHeight。対象：伊勢・三河湾、愛知県外海 |
 | JR東海 | `traininfo.jr-central.co.jp/zairaisen/data/trainInfo/json/unkou.json` | 平常時 events=null。events[].imp_line/status/cause、message_info[i].delivery_msg。路線マスタ `hp_senku_master_ja.json` |

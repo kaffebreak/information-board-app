@@ -179,7 +179,7 @@ footer .src{margin-left:auto}
 const DEMO = new URLSearchParams(location.search).has("demo");
 const POLL_MS = 15000;
 const WD = "日月火水木金土";
-let lastOk = 0;
+let lastOk = Date.now();   // 0 だと最初の取得までの間「応答がありません」が出てしまう
 
 /* ---------- 時計 ---------- */
 /* PCのタイムゾーン設定に関係なく日本時間で表示 */
@@ -286,7 +286,7 @@ function itemsHtml(items, emptyText){
   if (!items.length) return `<div class="empty">${emptyText}</div>`;
   return `<ul class="items" data-trim>` + items.map(i =>
     `<li class="it ${esc(i.level)}"><span class="badge">${esc(i.kind)}</span>
-      <span class="tt">${esc(i.title)}${i.direction ? `<small>${esc(i.direction)}</small>` : ""}</span>
+      <span class="tt">${esc(i.title)}${i.direction ? `<small>${esc(i.direction)}</small>` : ""}${i.located === false ? `<small>区間不明</small>` : ""}</span>
       <span class="dd">${esc(i.detail || "")}</span></li>`).join("") + `</ul>`;
 }
 function renderRoad(road, hasMap){
@@ -397,12 +397,12 @@ async function refresh(){
     if (!res.ok) throw new Error(res.status);
     let st = await res.json();
     if (DEMO) st = applyDemo(st);
-    lastOk = Date.now();
     renderAlerts(st.alerts);
     renderRail(st.rail);
     renderRoad(st.road, hasMap);
     renderFooter(st.sources, st.now, !!st.road.route23);
-  }catch(e){ /* 次回に再試行（画面は前回の内容を保持） */ }
+    lastOk = Date.now();   // 描画まで終わってから。描画で失敗が続けば「応答がありません」で気づける
+  }catch(e){ console.error("更新に失敗", e); /* 次回に再試行（画面は前回の内容を保持） */ }
 }
 
 /* 長時間表示でブラウザが重くならないよう、6時間ごとに再読み込み（サーバー応答を確認してから） */

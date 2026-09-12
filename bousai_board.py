@@ -89,7 +89,8 @@ def load_config() -> dict:
             with open(path, encoding="utf-8-sig") as f:
                 user = json.load(f)
             for k, v in user.items():
-                if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                # intervals だけは項目単位の上書き。subway_lines などは「表示するもの」の指定なので丸ごと置き換える
+                if k == "intervals" and isinstance(v, dict):
                     cfg[k].update(v)
                 else:
                     cfg[k] = v
@@ -193,8 +194,8 @@ def get_detail(url: str):
 class Daily:
     """1日1回程度の再取得で足りるマスタ類"""
 
-    def __init__(self, loader, ttl=6 * 3600):
-        self.loader, self.ttl = loader, ttl
+    def __init__(self, loader, ttl=6 * 3600, retry=600):
+        self.loader, self.ttl, self.retry = loader, ttl, retry
         self.value, self.at, self.lock = None, 0.0, threading.Lock()
 
     def get(self):
@@ -206,7 +207,9 @@ class Daily:
                 except Exception:
                     if self.value is None:
                         raise
-                    log.warning("マスタ再取得に失敗（前回値を使用）")
+                    # 呼ばれるたびに再試行して警告を出し続けないよう、retry 秒後まで前回値で待つ
+                    self.at = time.time() - self.ttl + self.retry
+                    log.warning("マスタ再取得に失敗（前回値を使用。%d分後に再試行）", self.retry // 60)
             return self.value
 
 
@@ -502,6 +505,17 @@ def rail_level(status_names):
     return "normal"
 
 
+def _jr_line(target: str, master: list):
+    """config の路線指定を路線マスタと突き合わせ、(マスタ行, 表示用の基本項目) を返す"""
+    nt = nfkc(target)
+    m = next((x for x in master
+              if nfkc(f"{x['ryokakuSenkuMei']}({x['ryokakuSenkuKaishiShuryoEki']})") == nt
+              or nfkc(x["ryokakuSenkuMei"]) == nt), None)
+    name = m["ryokakuSenkuMei"] if m else target.split("(")[0]
+    return m, {"name": name, "sub": m["ryokakuSenkuKaishiShuryoEki"] if (m and name == "東海道線") else "",
+               "code": (m or {}).get("ekiNumberKigobu", ""), "color": (m or {}).get("ryokakuSenkuColorCdchi", "#888")}
+
+
 def src_jr() -> dict:
     master = JR_MASTER.get().get("lst", [])
     # JRサイト自身が「提供停止（メンテナンス）」を出しているときは、その旨をそのまま出す
@@ -512,16 +526,8 @@ def src_jr() -> dict:
         log.warning("JRの提供状態が取得できません（通常処理を続行）: %s", e)
         svc = {}
     if str((svc or {}).get("serviceJotai", "0")) != "0":
-        lines = []
-        for target in CFG["jr_lines"]:
-            nt = nfkc(target)
-            m = next((x for x in master
-                      if nfkc(f"{x['ryokakuSenkuMei']}({x['ryokakuSenkuKaishiShuryoEki']})") == nt
-                      or nfkc(x["ryokakuSenkuMei"]) == nt), None)
-            name = m["ryokakuSenkuMei"] if m else target.split("(")[0]
-            lines.append({"name": name, "sub": (m or {}).get("ryokakuSenkuKaishiShuryoEki", "") if name == "東海道線" else "",
-                          "code": (m or {}).get("ekiNumberKigobu", ""), "color": (m or {}).get("ryokakuSenkuColorCdchi", "#888"),
-                          "level": "offhours", "status": "情報提供停止中", "detail": ""})
+        lines = [dict(_jr_line(t, master)[1], level="offhours", status="情報提供停止中", detail="")
+                 for t in CFG["jr_lines"]]
         return {"lines": lines, "info": "JR東海の運行情報はメンテナンスのため提供停止中です"}
     d = get_json(bust(JR + "trainInfo/json/unkou.json"), conditional=False)
     events = d.get("events") or []
@@ -529,12 +535,8 @@ def src_jr() -> dict:
     aligned = len(msgs) == len(events)
     lines = []
     for target in CFG["jr_lines"]:
-        nt = nfkc(target)
-        m = next((x for x in master
-                  if nfkc(f"{x['ryokakuSenkuMei']}({x['ryokakuSenkuKaishiShuryoEki']})") == nt
-                  or nfkc(x["ryokakuSenkuMei"]) == nt), None)
-        name = m["ryokakuSenkuMei"] if m else target.split("(")[0]
-        sub = m["ryokakuSenkuKaishiShuryoEki"] if m else ""
+        m, base = _jr_line(target, master)
+        name = base["name"]
         keys = {nfkc(target), nfkc(name)}
         if m:
             keys.add(nfkc(f"{m['ryokakuSenkuMei']}({m['ryokakuSenkuKaishiShuryoEki']})"))
@@ -555,13 +557,9 @@ def src_jr() -> dict:
             text = "　".join(v for v in ((st[0] if st else ""), msg, extra) if v)
             if text:
                 details.append(text)
-        lines.append({
-            "name": name, "sub": sub if name == "東海道線" else "",
-            "code": (m or {}).get("ekiNumberKigobu", ""), "color": (m or {}).get("ryokakuSenkuColorCdchi", "#888"),
-            "level": rail_level(statuses),
-            "status": statuses[0] if statuses else "平常運転",
-            "detail": " / ".join(details),
-        })
+        lines.append(dict(base, level=rail_level(statuses),
+                          status=statuses[0] if statuses else "平常運転",
+                          detail=" / ".join(details)))
     return {"lines": lines}
 
 
@@ -603,6 +601,10 @@ def src_subway() -> dict:
 
 
 MEITETSU_CODES = {"名古屋本線": "NH", "常滑線": "TA", "河和線": "KC", "犬山線": "IY", "瀬戸線": "ST"}
+# 名鉄の全線区。事由の先頭が線区名かどうかの判定に使う（「強風のため名古屋本線 …」を線区名と誤認しないため）
+MEITETSU_LINES = ("名古屋本線", "豊川線", "西尾線", "蒲郡線", "三河線", "豊田線", "常滑線", "空港線", "築港線",
+                  "河和線", "知多新線", "犬山線", "各務原線", "広見線", "小牧線", "津島線", "尾西線", "竹鼻線",
+                  "羽島線", "瀬戸線")
 # 「一部運休」は遅延として扱うため、運転見合わせの判定に「運休」は入れない
 STOP_RE = re.compile(r"見合わせ|不通")
 # 備考欄の定型文（画面に出しても判断材料にならない）
@@ -634,9 +636,19 @@ def _em_items(part: str) -> list:
 
 
 def _em_line_of(item: str) -> str:
-    """「三河線 土橋駅～上挙母駅間 人身事故」→「三河線」"""
+    """「三河線 土橋駅～上挙母駅間 人身事故」→「三河線」
+
+    先頭の語に含まれる既知の線区名だけを返す（「知多新線・河和線」→そのまま、「全線」→「全線」、
+    「強風のため名古屋本線」→「名古屋本線」、線区名を含まなければ空）
+    """
     m = re.match(r"(\S+?線)(?:\s|$)", item)
-    return m.group(1) if m else ""
+    if not m:
+        return ""
+    tok = m.group(1)
+    if tok == "全線":
+        return tok
+    found = sorted((ln for ln in MEITETSU_LINES if ln in tok), key=tok.index)
+    return "・".join(found)
 
 
 def _em_blocks(seg: str) -> list:
@@ -675,7 +687,8 @@ def _em_blocks(seg: str) -> list:
 def _cause_short(item: str) -> str:
     """「三河線 土橋駅～上挙母駅間 人身事故」→「三河線 人身事故」"""
     parts = item.split()
-    return f"{parts[0]} {parts[-1]}" if len(parts) >= 2 else item
+    line = _em_line_of(item) or parts[0]
+    return f"{line} {parts[-1]}" if len(parts) >= 2 else item
 
 
 def src_meitetsu() -> dict:
@@ -708,6 +721,9 @@ def src_meitetsu() -> dict:
         row = {"name": name, "code": MEITETSU_CODES.get(name, ""), "color": "#E60012",
                "level": "normal", "status": "平常運転", "detail": ""}
         hits = [b for b in blocks if any(n == "全線" or name in n for n in b["names"])]
+        # 同じ線区が「運転見合わせ」と「遅延」の両方に載ることがある。深刻な方を先頭にして、
+        # status（先頭ブロックの見出し）と level（全ブロックのOR）が食い違わないようにする
+        hits.sort(key=lambda b: 0 if STOP_RE.search(b["state"]) else 1)
         if off_hours and not blocks:
             row.update(level="offhours", status="情報提供時間外")
         elif hits:
@@ -732,9 +748,10 @@ def src_meitetsu() -> dict:
     msgs = []
     affected_targets = any(l["level"] != "normal" for l in lines)
     # 表示していない線区で起きた事由（波及元の場所が分かるように1回だけ出す）
-    # 線区名で始まらない事由は、影響を受けた線区の行にそのまま出しているので繰り返さない
+    # 線区名で始まらない事由と「全線 …」は、影響を受けた線区の行にそのまま出しているので繰り返さない
     other_reasons = [r for b in blocks for r in b["reasons"]
-                     if not is_target(_em_line_of(r)) and (_em_line_of(r) or not affected_targets)]
+                     if not is_target(_em_line_of(r)) and _em_line_of(r) != "全線"
+                     and (_em_line_of(r) or not affected_targets)]
     if other_reasons:
         shown = list(dict.fromkeys(other_reasons))
         msgs.append(("事由：" if affected_targets else "表示中以外の線区：") + "／".join(shown[:3]) + (" ほか" if len(shown) > 3 else ""))
@@ -977,7 +994,13 @@ STATE_LOCK = threading.Lock()
 
 def run_source(key: str):
     func, label, ikey = SOURCES[key]
-    interval = max(10, int(CFG["intervals"].get(ikey, 60)))
+    default = DEFAULT_CONFIG["intervals"].get(ikey, 60)
+    try:
+        interval = max(10, int(CFG["intervals"].get(ikey, default)))
+    except (AttributeError, TypeError, ValueError):
+        # ここで例外を出すとこの系統のスレッドだけが黙って止まる。既定値で続ける
+        log.error("config.json の intervals.%s が数値ではありません（既定の %d 秒で続行）", ikey, default)
+        interval = default
     while True:
         started = time.time()
         try:
@@ -987,8 +1010,10 @@ def run_source(key: str):
                               "failed_at": None, "interval": interval}
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
-            log.warning("[%s] 取得失敗 %s", label, msg)
-            log.debug(traceback.format_exc())
+            # 通信・構造変更（RuntimeError/OSError/ValueError）は一行で十分。それ以外はコードの不具合の
+            # 可能性が高いので、原因を追えるように traceback も残す
+            expected = isinstance(e, (RuntimeError, OSError, ValueError))
+            log.warning("[%s] 取得失敗 %s", label, msg, exc_info=not expected)
             with STATE_LOCK:
                 ent = STATE.setdefault(key, {"value": None, "updated": None, "interval": interval})
                 ent.update(error=msg, failed_at=time.time(), interval=interval)
@@ -1184,10 +1209,18 @@ def main():
         logging.getLogger().addHandler(fh)
     except Exception as e:
         log.warning("ログファイルを開けません（画面表示のみ）: %s", e)
+    # スレッドの想定外の停止は既定では stderr にしか出ない（最小化した窓では見えない）
+    threading.excepthook = lambda a: log.error(
+        "スレッドが停止しました\n%s", "".join(traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback)).strip())
     for i, key in enumerate(SOURCES):
         th = threading.Thread(target=lambda k=key, d=i: (time.sleep(d * 0.7), run_source(k)), daemon=True)
         th.start()
-    srv = ThreadingHTTPServer((CFG["host"], int(CFG["port"])), Handler)
+    try:
+        srv = ThreadingHTTPServer((CFG["host"], int(CFG["port"])), Handler)
+    except OSError as e:
+        # ポート使用中（二重起動）や権限不足。run_server.bat が再起動を繰り返すので、理由をログに残す
+        log.error("起動できません（ポート %s が使用中か、権限がありません）: %s", CFG["port"], e)
+        sys.exit(1)
     log.info("起動しました  http://%s:%s/", CFG["host"], CFG["port"])
     try:
         srv.serve_forever()

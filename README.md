@@ -41,7 +41,7 @@
 | `quake_hold_hours` | 地震と長周期地震動を発生から何時間表示し続けるか（初期値24） |
 | `enable_route23` | 国道23号欄の表示（保留中のため初期値 `false`） |
 | `route23_notes` | 国道23号欄に常時表示するメモ（`enable_route23` が `true` のときだけ使います） |
-| `google_maps_api_key` | Google Maps のAPIキー。入れると東海〜四日市の交通状況地図が表示されます。空欄なら地図は出ません。 |
+| `google_maps_api_key` | Google Maps のAPIキー。入れると東海〜四日市の交通状況地図が表示されます。空欄なら地図は出ません。キーは表示ページに埋め込まれるので、`host` を `127.0.0.1` 以外にして他のPCから見られるようにする場合は、Google側でキーにHTTPリファラ制限を付けてください。 |
 | `isewangan_east` / `isewangan_west` | 伊勢湾岸道の監視区間の両端 |
 
 設定を変えたら、サーバーのウィンドウを閉じて `start_board.bat` を実行し直してください。
