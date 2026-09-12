@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+config.json
+board.log
+board.log.*

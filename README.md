@@ -8,7 +8,8 @@
 |---|---|
 | `bousai_board.py` | 各機関からデータを集めて、表示用ページとまとめたJSONを配信するサーバー |
 | `bousai_board.html` | 全画面表示のページ（15秒ごとに自動更新） |
-| `config.json` | 表示路線、地図キー、手書きメモなどの設定 |
+| `config.json` | 表示路線、地図キー、手書きメモなどの設定。APIキーを書くファイルなのでgitには含めません（`config.example.json` をコピーして作ります。無くても既定値で動きます） |
+| `config.example.json` | `config.json` の見本 |
 | `start_board.bat` | サーバー起動とブラウザ全画面表示をまとめて行う |
 | `run_server.bat` | サーバーが止まったとき自動で再起動する（start_board.bat から呼ばれる） |
 

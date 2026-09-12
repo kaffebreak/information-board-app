@@ -23,6 +23,7 @@ import gzip
 import html
 import json
 import logging
+import logging.handlers
 import os
 import re
 import sys
@@ -504,7 +505,12 @@ def rail_level(status_names):
 def src_jr() -> dict:
     master = JR_MASTER.get().get("lst", [])
     # JRサイト自身が「提供停止（メンテナンス）」を出しているときは、その旨をそのまま出す
-    svc = get_json(bust(JR + "hp_service_jotai_kanri.json"), conditional=False)
+    # 提供状態は運行情報の本体ではないので、取れなくても通常処理に進む
+    try:
+        svc = get_json(bust(JR + "hp_service_jotai_kanri.json"), conditional=False)
+    except Exception as e:
+        log.warning("JRの提供状態が取得できません（通常処理を続行）: %s", e)
+        svc = {}
     if str((svc or {}).get("serviceJotai", "0")) != "0":
         lines = []
         for target in CFG["jr_lines"]:
@@ -709,8 +715,12 @@ def src_meitetsu() -> dict:
                 detail = "　".join(dict.fromkeys(direct + own_notes))
                 stop = stop or any(STOP_RE.search(x) for x in direct)
             else:  # 他線区で起きた事由の波及
-                causes = [_cause_short(r) for b in hits for r in b["reasons"]]
-                detail = ("、".join(dict.fromkeys(causes)) + "の影響") if causes else ""
+                causes = [_cause_short(r) for b in hits for r in b["reasons"] if _em_line_of(r)]
+                # 「強風のため」など線区名で始まらない事由は波及元が書けないので、そのまま出す
+                plain = [r for b in hits for r in b["reasons"] if not _em_line_of(r)]
+                parts = ["、".join(dict.fromkeys(causes)) + "の影響"] if causes else []
+                parts += list(dict.fromkeys(plain))
+                detail = "　".join(parts)
                 if own_notes:
                     detail = "　".join([detail] + own_notes) if detail else "　".join(own_notes)
             row.update(level="stop" if stop else "delay", status=hits[0]["state"], detail=detail[:200])
@@ -756,6 +766,10 @@ def src_aonami() -> dict:
     if not text:
         m = re.search(r'<span class="rit02">(.*?)</span>', h, re.S)
         text = strip_tags(m.group(1)) if m else ""
+    # どちらの形でも読めなければ、平常と異常の区別がつかない。名鉄と同じく構造変更として扱う
+    # （「遅延」で出すと、実際には平常なのに黄色く見えてしまう）
+    if not text:
+        raise RuntimeError("あおなみ線の運行情報を読み取れません（ページ構造の変更）")
     normal = "平常通り" in text
     level = "normal" if normal else ("stop" if re.search(r"見合わせ|運休|不通", text) else "delay")
     return {"level": level, "status": "平常運転" if normal else (text.split("\n")[0][:40] or "情報なし"),
@@ -862,6 +876,10 @@ def src_ihighway() -> dict:
     ranges = IW_POINTS.get()
     east = ranges.get(nfkc(CFG["isewangan_east"]))
     west = ranges.get(nfkc(CFG["isewangan_west"]))
+    # 設定のIC名が NEXCO の表記と一致しないとき（「東海JCT」など）は理由が分かるように止める
+    missing = [CFG[k] for k, v in (("isewangan_east", east), ("isewangan_west", west)) if v is None]
+    if missing:
+        raise RuntimeError("伊勢湾岸道のIC名が見つかりません（config.json）: %s" % "、".join(missing))
     lo, hi = min(west[0], east[0]) - 4, max(west[1], east[1]) + 4
     d = get_json(IH + "traffic.json")
     items, seen = [], set()
@@ -1153,6 +1171,14 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                         datefmt="%m/%d %H:%M:%S")
+    # 常駐運用では画面を見ていないため、ログをファイルにも残す（再起動の繰り返しなどに気づけるように）
+    try:
+        fh = logging.handlers.RotatingFileHandler(os.path.join(HERE, "board.log"),
+                                                  maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%m/%d %H:%M:%S"))
+        logging.getLogger().addHandler(fh)
+    except Exception as e:
+        log.warning("ログファイルを開けません（画面表示のみ）: %s", e)
     for i, key in enumerate(SOURCES):
         th = threading.Thread(target=lambda k=key, d=i: (time.sleep(d * 0.7), run_source(k)), daemon=True)
         th.start()
