@@ -33,7 +33,7 @@
 | 津波 | `bosai/tsunami/data/list.json` ＋詳細 | 最新の VTSE41。Body.Tsunami.Forecast.Item[].Area.Name / Category.Kind.Name / MaxHeight.TsunamiHeight。対象：伊勢・三河湾、愛知県外海 |
 | JR東海 | `traininfo.jr-central.co.jp/zairaisen/data/trainInfo/json/unkou.json` | 平常時 events=null。events[].imp_line/status/cause、message_info[i].delivery_msg。路線マスタ `hp_senku_master_ja.json` |
 | 地下鉄 | `kotsu.city.nagoya.jp/datas/latest_traffic.json` | rosen_id（M_LINE＝名城・名港）、icon_cd N/W/C/E |
-| 名鉄 | `top.meitetsu.co.jp/em/`（HTML） | JSONなし。平常は `p.emLv00`「15分以上の列車の遅れはございません。」。異常時は `div.emInfo.emLv02` の中に h2＝状態、`ul.emListLine>li`＝対象線区、表の「路線／理由／備考」。線区判定は emListLine を使う（文章マッチは誤検知するので戻さない）。どちらも無ければ構造変更とみなして例外 |
+| 名鉄 | `top.meitetsu.co.jp/em/`（HTML） | JSONなし。平常は `p.emLv00`「15分以上の列車の遅れはございません。」。異常時は `div.emInfo.emLv02` の中に h2＝状態、`ul.emListLine>li`＝対象線区、表の「路線／理由／備考」。線区判定は emListLine を使う（文章マッチは誤検知するので戻さない）。どちらも無ければ構造変更とみなして例外。提供時間外（0:31〜4:59）の文言差し替えは**ページ内JSが `#descriptionText` を書き換えているだけ**で取得HTMLには出ないため、JSと同じ条件を `off_hours` で判定する（2026-09-13 実物で確認） |
 | あおなみ線 | `aonamiline.co.jp/railinfo`（HTML） | `table.delay_table` の td |
 | 伊勢湾岸道 | `ihighway.jp/datas/json/traffic.json` | NEXCO中日本。trafficInfo/otherTrafficInfo のカテゴリ別。区間判定は `icInfoApp.json` の pointX（東海JCT 5489〜みえ川越 5278）と、イベントの coordinate または題名のIC名。フィールドは jam が `distance`(km)・`passing.section`/`passing.time`・`title`(渋滞先頭)、規制系が `detail`＋`reason`、その他は `title`＋`reason` |
 | 国道23号 愛知側（保留） | `cbr.mlit.go.jp/meikoku/cms/{kisei,kinkyu}/?view=index` | 名古屋国道事務所。事故・渋滞は含まない。JARTIC は規約面で採用せず |

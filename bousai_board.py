@@ -697,7 +697,10 @@ def src_meitetsu() -> dict:
 
     targets = [x for x in (CFG.get("meitetsu_lines") or []) if x]
     is_target = lambda ln: bool(ln) and any(t in ln or ln in t for t in targets)
-    # 名鉄サイトは 0:31〜4:59 に平常ページの文言を「提供時間は5:00〜0:30」に差し替える。同じ判定をする
+    # 名鉄サイトは 0:31〜4:59 に平常時の文言を「運行情報サービスの提供時間は、AM5:00〜AM0:30です。」に
+    # 差し替える。ただし差し替えはページ内のJSが #descriptionText を書き換えているだけで、取得した
+    # HTMLには常に emLv00 の平常文言が入っている（JSは実行されないので構造変更の例外にはならない）。
+    # そのためサイトのJSと同じ条件をここで判定する。境界の「> 30」（0:30 は時間内）もJSに合わせる
     now = now_jst()
     off_hours = (1 <= now.hour < 5) or (now.hour == 0 and now.minute > 30)
     lines = []
