@@ -143,7 +143,8 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .it.stop .badge{background:var(--alarm);color:#fff}
 .it.delay .badge{background:var(--caution);color:#1d1600}
 .it .tt{display:block;font-size:1.1em;font-weight:700}
-.it .sub{display:block;font-size:.92em;color:var(--mute);margin-top:.1em}
+/* 2行目は鉄道の運休理由（.row .dt）と同じ扱い。添え物ではなく読ませる情報として出す */
+.it .sub{display:block;font-size:.98em;line-height:1.4;color:#D5DEE3;margin-top:.1em}
 .it.more{display:block;color:var(--mute);font-size:.95em;border-bottom:none}
 .empty{color:var(--mute);font-size:1.1em;padding:.3em 0}
 .empty::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.5em;vertical-align:.1em}
