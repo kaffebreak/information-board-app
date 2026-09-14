@@ -42,6 +42,8 @@ header .clock small{font-size:.55em;font-weight:400;color:var(--mute);margin-rig
 body.alarm header{background:var(--alarm)}
 body.alarm header .state{color:#fff;font-weight:700;font-size:1.3rem}
 body.alarm header .clock small{color:#FFE3E3}
+/* 一部を判定できていない状態。発令（赤）とは別物なので文字色だけ変える */
+body.unsure header .state{color:var(--caution)}
 header .conn{display:none;padding:.2em .8em;border-radius:.3em;background:var(--caution);color:#1d1600;font-weight:700;font-size:1.1rem}
 body.noconn header .conn{display:inline-block}
 
@@ -74,7 +76,8 @@ body.noconn header .conn{display:inline-block}
 .tile .ln .s{font-size:1.05em;color:#D5DEE3;line-height:1.35}
 .tile .note{font-size:.9em;color:var(--mute);margin-top:.3em;line-height:1.35}
 .tile.alarm .note{color:#F5C9CB}
-.tile .flag{position:absolute;top:.9vh;right:.7vw;font-size:.85rem;color:var(--caution)}
+.tile .flag{margin-top:.35em;font-size:.9em;color:var(--caution);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.alarm .flag{color:#FFD98A}
 
 /* ---------- main ---------- */
 main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
@@ -234,9 +237,13 @@ function fit(box){
 /* ---------- 発令条件タイル ---------- */
 function renderAlerts(alerts){
   const box = document.getElementById("alerts");
-  let any = false;
+  let any = false, unsure = 0;
   box.innerHTML = alerts.map(a => {
     if (a.level === "alarm") any = true;
+    /* 判定材料が欠けている＝この項目は判断できていない。直近1回の取得失敗（failing）は
+       データがまだ新しいので、画面をざわつかせないようフラグ表示だけにとどめる */
+    const partial = (a.partial || []).join("・");
+    if (a.stale || partial) unsure++;
     const cls = [a.level, a.stale ? "stale" : ""].join(" ");
     let body;
     if (a.lines.length){
@@ -246,16 +253,21 @@ function renderAlerts(alerts){
     }
     const note = a.note ? `<div class="note">${esc(a.note)}</div>` : "";
     const hold = (a.level === "alarm" && a.hold) ? `<div class="note">${esc(a.hold)}</div>` : "";
-    const flag = a.stale ? `<div class="flag">データ取得遅延</div>` : "";
-    return `<div class="tile ${cls}">${flag}
+    const ft = a.stale ? "データ取得遅延" : partial ? `${partial}を確認中` : a.failing ? "取得再試行中" : "";
+    const flag = ft ? `<div class="flag">${esc(ft)}</div>` : "";
+    return `<div class="tile ${cls}">
       <div class="head"><span class="lamp"></span><span class="title">${esc(a.title)}</span></div>
-      <div class="scope">${esc(a.scope)}</div><div class="crit">${esc(a.criteria)}</div>
+      <div class="scope">${esc(a.scope)}</div><div class="crit">${esc(a.criteria)}</div>${flag}
       <div class="body">${body}${hold}${note}</div></div>`;
   }).join("");
   document.body.classList.toggle("alarm", any);
+  document.body.classList.toggle("unsure", !!unsure && !any);
   const n = alerts.filter(a => a.level === "alarm").length;
+  /* 全部が判定できない（起動直後・通信断）ときに「一部」と書くと嘘になる */
   document.getElementById("state").textContent = any
-    ? `発令条件に該当 ${n} 項目`
+    ? `発令条件に該当 ${n} 項目${unsure ? "（一部の情報を確認中）" : ""}`
+    : unsure >= alerts.length ? "発令条件を判定できません"
+    : unsure ? "一部の情報を確認中（ほかに該当する情報はありません）"
     : "発令条件に該当する情報はありません";
   box.querySelectorAll(".tile .body").forEach(fit);
 }
@@ -331,9 +343,18 @@ function renderRoad(road, hasMap){
 /* ---------- フッター ---------- */
 function renderFooter(sources, now, has23){
   const bad = sources.filter(s => s.stale);
-  const status = bad.length
-    ? bad.map(s => `<span class="s bad num">${esc(s.name)} 取得できていません（最終 ${s.updated ? hhmm(s.updated) : "--:--"}）</span>`).join("")
-    : `<span class="s num">データ取得 正常（${sources.length}系統）　最終確認 ${hhmm(now)}</span>`;
+  const failing = sources.filter(s => !s.stale && s.failing);
+  const names = ss => ss.map(s => esc(s.name)).join("・");
+  /* 出典まで1行に収める必要がある（footer は nowrap）。多いときは件数にまとめる */
+  let status;
+  if (bad.length > 2)
+    status = `<span class="s bad num">${bad.length}系統で取得できていません　最終確認 ${hhmm(now)}</span>`;
+  else if (bad.length)
+    status = bad.map(s => `<span class="s bad num">${esc(s.name)} 取得できていません（最終 ${s.updated ? hhmm(s.updated) : "--:--"}）</span>`).join("");
+  else if (failing.length)
+    status = `<span class="s bad num">${failing.length > 2 ? `${failing.length}系統` : names(failing)} 再取得中　最終確認 ${hhmm(now)}</span>`;
+  else
+    status = `<span class="s num">データ取得 正常（${sources.length}系統）　最終確認 ${hhmm(now)}</span>`;
   document.getElementById("footer").innerHTML =
     (DEMO ? `<span class="demo">表示確認モード（ダミーデータ）</span>` : "") + status +
     // 出典は正式名称で書く（あおなみ線の運営は「名古屋臨海高速鉄道」。貨物専業の「名古屋臨海鉄道」とは別会社）
@@ -388,6 +409,9 @@ function applyDemo(st){
     {main:"津波警報", sub:"愛知県外海　予想される最大波 3m"}]});
   Object.assign(A.lv5, {level:"caution", stale:false, lines:[{main:"レベル4土砂災害危険警報", sub:"三重県北中部（津市中西部、亀山市）"}]});
   Object.assign(A.quake_national, {level:"alarm", stale:false, lines:[{main:"最大震度6強", sub:"9/11 01:40　三重県南東沖 M7.9"}]});
+  A.lv5.partial = ["河川情報"];                 // 一部だけ取れていない
+  Object.assign(A.wx, {stale:true});            // 古くて判定できない
+  st.sources = st.sources.map((s, i) => i === 0 ? {...s, failing:true} : s);
   st.rail.jr.lines = (st.rail.jr.lines || []).map((l,i) => i===0 ? {...l, level:"stop", status:"運転見合わせ", detail:"地震の影響により、全線で運転を見合わせています。運転再開は安全確認後となる見込みです。"} :
                                             {...l, level:"delay", status:"遅れ／運休あり", detail:"大府駅で、線路点検の影響により一部の列車に遅れが発生しています。"});
   if (st.rail.subway.lines.length) st.rail.subway.lines[0] = {...st.rail.subway.lines[0], level:"stop", status:"運転見合わせ", detail:"全線　地震　安全確認のため全線で運転を見合わせています。"};
