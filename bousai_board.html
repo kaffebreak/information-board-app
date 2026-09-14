@@ -448,15 +448,17 @@ function applyDemo(st){
 
 /* ---------- 更新ループ ---------- */
 /* 取得が重なると、遅れて届いた古い応答が後から描画され、出ていた警報が平常表示に
-   戻ってしまう。通し番号を持たせ、描画の直前に自分が最新かを確かめる */
-let seq = 0;
+   戻ってしまう。通し番号を持たせ、描画の直前に「自分より新しい結果をすでに描いたか」で判定する。
+   「次の取得が始まったか」で捨てると、応答が毎回15秒を超えたときに何も描けなくなる */
+let seq = 0, drawn = 0;
 async function refresh(){
   const my = ++seq;
   try{
     const res = await fetch("/api/status", {cache:"no-store"});
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
-    if (my !== seq) return;          // 後から始まった取得がある。この結果は捨てる
+    if (my <= drawn) return;         // すでにこれより新しい結果を描いている。この結果は捨てる
+    drawn = my;
     let st = data;
     if (DEMO) st = applyDemo(st);
     renderAlerts(st.alerts);
