@@ -135,7 +135,10 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .it{display:flex;align-items:baseline;column-gap:.7em;padding:.38em 0;border-bottom:1px solid var(--rule)}
 /* 折り返しがバッジの下に回り込まないよう、2行目以降はバッジの右側に収める */
 .it .tx{flex:1;min-width:0}
-.badge{align-self:center;font-size:.9em;font-weight:700;padding:.2em .55em;border-radius:.3em;white-space:nowrap;
+/* min-width は4文字ぶん。ここを揃えないと場所名の開始位置が行ごとにずれる。
+   「凍結防止剤散布」のような長いものは、路線チップと同じくはみ出して伸びる */
+.badge{align-self:center;display:grid;place-items:center;min-width:5.1em;
+  font-size:.9em;font-weight:700;padding:.2em .55em;border-radius:.3em;white-space:nowrap;
   background:#2A4A60;color:var(--ink)}
 .it.stop .badge{background:var(--alarm);color:#fff}
 .it.delay .badge{background:var(--caution);color:#1d1600}
