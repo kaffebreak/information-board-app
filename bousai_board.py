@@ -428,10 +428,32 @@ def src_tsunami() -> dict:
     return {"items": items, "report_at": iso(rt)}
 
 
+# 警報は「愛知」「三重」「河川」の3か所から取る。まとめて例外にすると、その回に取れた
+# 特別警報まで捨ててしまうので、取得元ごとに前回値を持って取れた分だけ反映する
+_WARN_PARTS: dict = {}
+_WARN_LOCK = threading.Lock()
+
+
+def _warn_part(key: str, label: str, fetch):
+    """取れたら更新して返す。失敗したら (前回値, 取れなかった名前) を返す"""
+    try:
+        data = fetch()
+    except Exception as e:
+        with _WARN_LOCK:
+            prev = _WARN_PARTS.get(key)
+        log.warning("[警報] %s を取得できません %s: %s（%s）", label, type(e).__name__, e,
+                    "前回値で継続" if prev is not None else "前回値なし")
+        return prev, label
+    with _WARN_LOCK:
+        _WARN_PARTS[key] = data
+    return data, None
+
+
 def src_warning() -> dict:
     area = AREA_CONST.get()
     lv5, lv4, wx = {}, {}, {}
     latest = None
+    missing, missing_wx, got = [], [], 0
 
     def add(bucket, name, c10name, c20name):
         b = bucket.setdefault(name, {"regions": [], "places": []})
@@ -440,8 +462,12 @@ def src_warning() -> dict:
         if c20name and c20name not in b["places"]:
             b["places"].append(c20name)
 
-    for pref in ("230000", "240000"):
-        data = get_json(JMA + f"warning/data/r8/{pref}.json")
+    for pref, label in (("230000", "愛知県の警報"), ("240000", "三重県の警報")):
+        data, bad = _warn_part(pref, label, lambda p=pref: get_json(JMA + f"warning/data/r8/{p}.json"))
+        if bad:
+            missing.append(bad)
+            missing_wx.append(bad)
+        got += data is not None
         for rep in as_list(data):
             if rep.get("infoType") == "取消":
                 continue
@@ -468,8 +494,11 @@ def src_warning() -> dict:
                         elif kc in WX_SPECIAL_CODES:
                             add(wx, WX_SPECIAL_CODES[kc], c10name, c20name)
 
-    # 河川氾濫（指定河川洪水予報）
-    fl = get_json(JMA + "flood/data/r8/flood_xml.json")
+    # 河川氾濫（指定河川洪水予報）。気象の特別警報とは無関係なので missing_wx には入れない
+    fl, bad = _warn_part("flood", "河川情報", lambda: get_json(JMA + "flood/data/r8/flood_xml.json"))
+    if bad:
+        missing.append(bad)
+    got += fl is not None
     for n in as_list(fl):
         item = n.get("item") or {}
         kc = str(item.get("code") or "")
@@ -490,7 +519,11 @@ def src_warning() -> dict:
     def pack(b):
         return [{"name": k, "regions": v["regions"], "places": v["places"]} for k, v in b.items()]
 
-    return {"lv5": pack(lv5), "lv4": pack(lv4), "wx": pack(wx), "report_at": iso(latest)}
+    # どこも取れず前回値も無い＝判断材料が何も無い。前回の表示を残すため取得失敗として扱う
+    if not got:
+        raise RuntimeError("警報・河川情報をいずれも取得できません")
+    return {"lv5": pack(lv5), "lv4": pack(lv4), "wx": pack(wx), "report_at": iso(latest),
+            "partial": missing, "partial_wx": missing_wx}
 
 
 # ======================================================================
@@ -1043,10 +1076,12 @@ def source_view(key: str):
     upd = ent.get("updated")
     interval = ent.get("interval") or 60
     stale = upd is None or (time.time() - upd) > max(interval * 3, 180)
+    # error は成功のたびに消えるので、立っていれば「直近の取得が失敗した」という意味になる。
+    # stale（前回成功から時間が経ちすぎ＝判定できない）とは別物として画面に渡す
     return ent.get("value"), {
         "key": key, "name": SOURCES[key][1],
         "updated": iso(dt.datetime.fromtimestamp(upd, JST)) if upd else None,
-        "stale": stale, "error": ent.get("error"),
+        "stale": stale, "failing": bool(ent.get("error")), "error": ent.get("error"),
     }
 
 
@@ -1092,24 +1127,30 @@ def build_alerts():
         "criteria": "震度5弱以上　長周期地震動階級3以上",
         "level": "alarm" if lines else "normal", "lines": lines, "note": note,
         "hold": f"発生から{hold}時間表示", "stale": sq["stale"] or slg["stale"],
+        "failing": sq["failing"] or slg["failing"],
     })
 
     # 2) 津波
     lines, level = [], "normal"
     for it in (ts or {}).get("items", []):
-        big = "大津波警報" in it["kind"] and "解除" not in it["kind"]
-        if big:
+        kind = it["kind"]
+        if "解除" in kind:
+            continue
+        if "大津波警報" in kind:
             level = "alarm"
-        elif ("津波警報" in it["kind"] or "津波注意報" in it["kind"]) and "解除" not in it["kind"] and level != "alarm":
-            level = "caution"
+        elif "津波警報" in kind or "津波注意報" in kind:
+            # 全体のレベルは一番重いものに合わせる。行はどの地域も残す
+            level = level if level == "alarm" else "caution"
         else:
             continue
         h = f"　予想される最大波 {it['height']}" if it["height"] else ""
-        lines.append({"main": it["kind"], "sub": f"{it['area']}{h}"})
+        lines.append({"main": kind, "sub": f"{it['area']}{h}"})
+    # 重いものから並べる（一番上が一番遠くから読まれる）
+    lines.sort(key=lambda l: 0 if "大津波警報" in l["main"] else (1 if "津波警報" in l["main"] else 2))
     alerts.append({
         "id": "tsunami", "title": "津波", "scope": "伊勢・三河湾　愛知県外海",
         "criteria": "予想最大波 3m超（大津波警報）", "level": level, "lines": lines,
-        "note": "", "stale": sts["stale"],
+        "note": "", "stale": sts["stale"], "failing": sts["failing"],
     })
 
     # 3) レベル5特別警報
@@ -1120,6 +1161,7 @@ def build_alerts():
         "id": "lv5", "title": "レベル5特別警報", "scope": "愛知県・三重県北中部",
         "criteria": "河川氾濫　大雨　土砂災害　高潮",
         "level": level, "lines": lines + lines4, "note": "", "stale": swa["stale"],
+        "failing": swa["failing"], "partial": (wa or {}).get("partial") or [],
     })
 
     # 4) 特別警報（気象）
@@ -1127,7 +1169,8 @@ def build_alerts():
     alerts.append({
         "id": "wx", "title": "特別警報（気象）", "scope": "愛知県・三重県北中部",
         "criteria": "暴風　波浪　暴風雪　大雪", "level": "alarm" if lines else "normal",
-        "lines": lines, "note": "", "stale": swa["stale"],
+        "lines": lines, "note": "", "stale": swa["stale"], "failing": swa["failing"],
+        "partial": (wa or {}).get("partial_wx") or [],
     })
 
     # 5) 全国 震度6弱以上
@@ -1137,7 +1180,7 @@ def build_alerts():
     alerts.append({
         "id": "quake_national", "title": "全国の地震", "scope": "全国", "criteria": "震度6弱以上",
         "level": "alarm" if lines else "normal", "lines": lines, "note": note,
-        "hold": f"発生から{hold}時間表示", "stale": sq["stale"],
+        "hold": f"発生から{hold}時間表示", "stale": sq["stale"], "failing": sq["failing"],
     })
     return alerts
 
