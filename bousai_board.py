@@ -434,6 +434,14 @@ _WARN_PARTS: dict = {}
 _WARN_LOCK = threading.Lock()
 
 
+def _warn_window() -> float:
+    """この秒数より古い取得元は「判っていない」とみなす（source_view の stale と同じ基準）"""
+    try:
+        return max(int(CFG["intervals"].get("warning", 60)) * 3, 180)
+    except (AttributeError, TypeError, ValueError):
+        return 180
+
+
 def _warn_part(key: str, label: str, fetch):
     """(データ, そのデータを取れた時刻, 取れなかった名前) を返す。失敗時は前回値を使う。
     前回値をいつまでも「今の情報」として出さないよう、時刻は更新せず古いまま返す"""
@@ -524,9 +532,13 @@ def src_warning() -> dict:
     # どこも取れず前回値も無い＝判断材料が何も無い。前回の表示を残すため取得失敗として扱う
     if not any(ats):
         raise RuntimeError("警報・河川情報をいずれも取得できません")
-    # 鮮度は一番古い取得元に合わせる。1か所でも取れない状態が続けば stale になる
+    # 長く取れていない（＝0.0 の未取得を含む）取得元。partial（直近1回の失敗）より強い状態で、
+    # 気象の特別警報は河川を見ないので、タイルごとに別の一覧を渡す
+    limit, labels = time.time() - _warn_window(), ("愛知県の警報", "三重県の警報", "河川情報")
+    unknown = [n for n, at in zip(labels, ats) if at < limit]
     return {"lv5": pack(lv5), "lv4": pack(lv4), "wx": pack(wx), "report_at": iso(latest),
-            "partial": missing, "partial_wx": missing_wx, "fresh_at": min(ats)}
+            "partial": missing, "partial_wx": missing_wx,
+            "unknown": unknown, "unknown_wx": [n for n in unknown if n != "河川情報"]}
 
 
 # ======================================================================
@@ -1058,13 +1070,8 @@ def run_source(key: str):
         started = time.time()
         try:
             value = func()
-            # 内部に複数の取得元を持つ系統（警報）は、一番古い取得時刻を採用する。
-            # そうしないと1か所だけ落ち続けても「今取れた」ことになってしまう
-            upd = time.time()
-            if isinstance(value, dict) and value.get("fresh_at"):
-                upd = min(upd, value["fresh_at"])
             with STATE_LOCK:
-                STATE[key] = {"value": value, "updated": upd, "error": None,
+                STATE[key] = {"value": value, "updated": time.time(), "error": None,
                               "failed_at": None, "interval": interval}
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
@@ -1172,6 +1179,7 @@ def build_alerts():
         "criteria": "河川氾濫　大雨　土砂災害　高潮",
         "level": level, "lines": lines + lines4, "note": "", "stale": swa["stale"],
         "failing": swa["failing"], "partial": (wa or {}).get("partial") or [],
+        "unknown": (wa or {}).get("unknown") or [],
     })
 
     # 4) 特別警報（気象）
@@ -1181,6 +1189,7 @@ def build_alerts():
         "criteria": "暴風　波浪　暴風雪　大雪", "level": "alarm" if lines else "normal",
         "lines": lines, "note": "", "stale": swa["stale"], "failing": swa["failing"],
         "partial": (wa or {}).get("partial_wx") or [],
+        "unknown": (wa or {}).get("unknown_wx") or [],
     })
 
     # 5) 全国 震度6弱以上
