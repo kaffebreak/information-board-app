@@ -123,6 +123,8 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .tight .row .dt{-webkit-line-clamp:1}
 /* 最小の文字サイズでも収まらないとき。行そのものを消す前に補足を落とす */
 .clip .row .dt{display:none}
+/* 件数を削る前に、道路の2行目（方向・内容）を落として全件を残す */
+.clip .it .sub{display:none}
 .clip .note{display:none}
 .tight .group{margin-bottom:.35em}
 .tight .it{padding:.22em 0}
@@ -130,15 +132,15 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 /* road */
 .road{display:flex;flex-direction:column;min-height:0}
 .items{list-style:none;margin:0;padding:0}
-.it{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:.7em;padding:.38em 0;border-bottom:1px solid var(--rule)}
+.it{display:flex;align-items:baseline;column-gap:.7em;padding:.38em 0;border-bottom:1px solid var(--rule)}
+/* 折り返しがバッジの下に回り込まないよう、2行目以降はバッジの右側に収める */
+.it .tx{flex:1;min-width:0}
 .badge{align-self:center;font-size:.9em;font-weight:700;padding:.2em .55em;border-radius:.3em;white-space:nowrap;
   background:#2A4A60;color:var(--ink)}
 .it.stop .badge{background:var(--alarm);color:#fff}
 .it.delay .badge{background:var(--caution);color:#1d1600}
-.it .tt{font-size:1.1em;font-weight:700}
-.it .tt small{font-size:.8em;font-weight:400;color:var(--mute);margin-left:.6em}
-.it .dd{font-size:.92em;color:var(--mute)}
-.it .dd:empty{display:none}
+.it .tt{display:block;font-size:1.1em;font-weight:700}
+.it .sub{display:block;font-size:.92em;color:var(--mute);margin-top:.1em}
 .it.more{display:block;color:var(--mute);font-size:.95em;border-bottom:none}
 .empty{color:var(--mute);font-size:1.1em;padding:.3em 0}
 .empty::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.5em;vertical-align:.1em}
@@ -327,10 +329,13 @@ function itemsHtml(items, emptyText, src){
     const t = (src && !src.updated) ? "取得中" : (src && src.stale) ? "判定できません" : emptyText;
     return `<div class="empty${t === emptyText ? "" : " pending"}">${t}</div>`;
   }
-  return `<ul class="items" data-trim>` + items.map(i =>
-    `<li class="it ${esc(i.level)}"><span class="badge">${esc(i.kind)}</span>
-      <span class="tt">${esc(i.title)}${i.direction ? `<small>${esc(i.direction)}</small>` : ""}${i.located === false ? `<small>区間不明</small>` : ""}</span>
-      <span class="dd">${esc(i.detail || "")}</span></li>`).join("") + `</ul>`;
+  return `<ul class="items" data-trim>` + items.map(i => {
+    /* 1行目＝種別と場所、2行目＝方向と内容。1行に流すと折り返しがバッジの下に回り込んで読みにくい */
+    const sub = [i.direction, i.detail, i.located === false ? "区間不明" : ""]
+      .filter(Boolean).map(esc).join("　");
+    return `<li class="it ${esc(i.level)}"><span class="badge">${esc(i.kind)}</span>
+      <span class="tx"><span class="tt">${esc(i.title)}</span>${sub ? `<span class="sub">${sub}</span>` : ""}</span></li>`;
+  }).join("") + `</ul>`;
 }
 function renderRoad(road, hasMap){
   document.getElementById("iwSection").textContent = road.isewangan.section || "";
