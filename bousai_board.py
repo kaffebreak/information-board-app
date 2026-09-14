@@ -435,25 +435,27 @@ _WARN_LOCK = threading.Lock()
 
 
 def _warn_part(key: str, label: str, fetch):
-    """取れたら更新して返す。失敗したら (前回値, 取れなかった名前) を返す"""
+    """(データ, そのデータを取れた時刻, 取れなかった名前) を返す。失敗時は前回値を使う。
+    前回値をいつまでも「今の情報」として出さないよう、時刻は更新せず古いまま返す"""
     try:
         data = fetch()
     except Exception as e:
         with _WARN_LOCK:
             prev = _WARN_PARTS.get(key)
         log.warning("[警報] %s を取得できません %s: %s（%s）", label, type(e).__name__, e,
-                    "前回値で継続" if prev is not None else "前回値なし")
-        return prev, label
+                    "前回値で継続" if prev else "前回値なし")
+        return (prev["data"], prev["at"], label) if prev else (None, 0.0, label)
+    at = time.time()
     with _WARN_LOCK:
-        _WARN_PARTS[key] = data
-    return data, None
+        _WARN_PARTS[key] = {"data": data, "at": at}
+    return data, at, None
 
 
 def src_warning() -> dict:
     area = AREA_CONST.get()
     lv5, lv4, wx = {}, {}, {}
     latest = None
-    missing, missing_wx, got = [], [], 0
+    missing, missing_wx, ats = [], [], []
 
     def add(bucket, name, c10name, c20name):
         b = bucket.setdefault(name, {"regions": [], "places": []})
@@ -463,11 +465,11 @@ def src_warning() -> dict:
             b["places"].append(c20name)
 
     for pref, label in (("230000", "愛知県の警報"), ("240000", "三重県の警報")):
-        data, bad = _warn_part(pref, label, lambda p=pref: get_json(JMA + f"warning/data/r8/{p}.json"))
+        data, at, bad = _warn_part(pref, label, lambda p=pref: get_json(JMA + f"warning/data/r8/{p}.json"))
         if bad:
             missing.append(bad)
             missing_wx.append(bad)
-        got += data is not None
+        ats.append(at)
         for rep in as_list(data):
             if rep.get("infoType") == "取消":
                 continue
@@ -495,10 +497,10 @@ def src_warning() -> dict:
                             add(wx, WX_SPECIAL_CODES[kc], c10name, c20name)
 
     # 河川氾濫（指定河川洪水予報）。気象の特別警報とは無関係なので missing_wx には入れない
-    fl, bad = _warn_part("flood", "河川情報", lambda: get_json(JMA + "flood/data/r8/flood_xml.json"))
+    fl, at, bad = _warn_part("flood", "河川情報", lambda: get_json(JMA + "flood/data/r8/flood_xml.json"))
     if bad:
         missing.append(bad)
-    got += fl is not None
+    ats.append(at)
     for n in as_list(fl):
         item = n.get("item") or {}
         kc = str(item.get("code") or "")
@@ -520,10 +522,11 @@ def src_warning() -> dict:
         return [{"name": k, "regions": v["regions"], "places": v["places"]} for k, v in b.items()]
 
     # どこも取れず前回値も無い＝判断材料が何も無い。前回の表示を残すため取得失敗として扱う
-    if not got:
+    if not any(ats):
         raise RuntimeError("警報・河川情報をいずれも取得できません")
+    # 鮮度は一番古い取得元に合わせる。1か所でも取れない状態が続けば stale になる
     return {"lv5": pack(lv5), "lv4": pack(lv4), "wx": pack(wx), "report_at": iso(latest),
-            "partial": missing, "partial_wx": missing_wx}
+            "partial": missing, "partial_wx": missing_wx, "fresh_at": min(ats)}
 
 
 # ======================================================================
@@ -1055,8 +1058,13 @@ def run_source(key: str):
         started = time.time()
         try:
             value = func()
+            # 内部に複数の取得元を持つ系統（警報）は、一番古い取得時刻を採用する。
+            # そうしないと1か所だけ落ち続けても「今取れた」ことになってしまう
+            upd = time.time()
+            if isinstance(value, dict) and value.get("fresh_at"):
+                upd = min(upd, value["fresh_at"])
             with STATE_LOCK:
-                STATE[key] = {"value": value, "updated": time.time(), "error": None,
+                STATE[key] = {"value": value, "updated": upd, "error": None,
                               "failed_at": None, "interval": interval}
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
@@ -1078,10 +1086,12 @@ def source_view(key: str):
     stale = upd is None or (time.time() - upd) > max(interval * 3, 180)
     # error は成功のたびに消えるので、立っていれば「直近の取得が失敗した」という意味になる。
     # stale（前回成功から時間が経ちすぎ＝判定できない）とは別物として画面に渡す
-    return ent.get("value"), {
+    val = ent.get("value")
+    return val, {
         "key": key, "name": SOURCES[key][1],
         "updated": iso(dt.datetime.fromtimestamp(upd, JST)) if upd else None,
         "stale": stale, "failing": bool(ent.get("error")), "error": ent.get("error"),
+        "partial": list((val or {}).get("partial") or []) if isinstance(val, dict) else [],
     }
 
 

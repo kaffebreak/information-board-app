@@ -121,6 +121,9 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .tight .row{padding:.2em 0}
 .tight .row .dt{-webkit-line-clamp:1}
+/* 最小の文字サイズでも収まらないとき。行そのものを消す前に補足を落とす */
+.clip .row .dt{display:none}
+.clip .note{display:none}
 .tight .group{margin-bottom:.35em}
 .tight .it{padding:.22em 0}
 
@@ -139,6 +142,9 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .it.more{display:block;color:var(--mute);font-size:.95em;border-bottom:none}
 .empty{color:var(--mute);font-size:1.1em;padding:.3em 0}
 .empty::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.5em;vertical-align:.1em}
+/* 「情報はありません」（緑）と「まだ判らない」（灰）は別物なので印を分ける */
+.empty.pending{color:var(--stale)}
+.empty.pending::before{background:transparent;box-shadow:inset 0 0 0 .13em var(--stale)}
 .notes{margin:.2em 0 .5em;padding:.4em .6em;border-left:.25em solid var(--caution);font-size:1em;line-height:1.4}
 .caveat{font-size:.82em;color:var(--mute);margin-top:.3em}
 #mapPanel{display:none;flex:0 0 40%;padding:0;overflow:hidden}
@@ -212,16 +218,18 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 function hhmm(isoStr){ if(!isoStr) return "--:--"; const d=jst(new Date(isoStr)); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
 function staleFlag(src){ if(!src) return ""; if(!src.updated) return "取得待ち"; return src.stale ? `取得できていません（最終 ${hhmm(src.updated)}）` : ""; }
 
-/* はみ出したら文字を縮め、それでも無理なら末尾を「ほか n 件」にまとめる */
+/* はみ出したら文字を縮め、次に補足を落とし、それでも無理なら末尾を「ほか n 件」にまとめる。
+   黙って末尾が隠れると「出ていない」と読めてしまうので、最後は必ず件数を出す */
 function fit(box){
   const base = +box.dataset.base || 100;
   box.style.fontSize = base + "%";
-  box.classList.remove("tight");
+  box.classList.remove("tight", "clip");
   let s = base;
   const over = () => box.scrollHeight > box.clientHeight + 2;
   while (over() && s > 84){ s -= 4; box.style.fontSize = s + "%"; }
   if (over()) box.classList.add("tight");
   while (over() && s > 64){ s -= 4; box.style.fontSize = s + "%"; }
+  if (over()) box.classList.add("clip");
   const lists = [...box.querySelectorAll("[data-trim]")].reverse();
   for (const list of lists){
     const kids = [...list.children].filter(c => !c.classList.contains("more"));
@@ -247,9 +255,11 @@ function renderAlerts(alerts){
     const cls = [a.level, a.stale ? "stale" : ""].join(" ");
     let body;
     if (a.lines.length){
-      body = a.lines.map(l => `<div class="ln"><div class="m">${esc(l.main)}</div>${l.sub ? `<div class="s">${esc(l.sub)}</div>` : ""}</div>`).join("");
+      body = `<div data-trim>` + a.lines.map(l =>
+        `<div class="ln"><div class="m">${esc(l.main)}</div>${l.sub ? `<div class="s">${esc(l.sub)}</div>` : ""}</div>`).join("") + `</div>`;
     } else {
-      body = `<div class="verdict">${a.stale ? "判定できません" : "該当なし"}</div>`;
+      /* partial のときは判っている範囲の話だと判るようにする（フラグに何を確認中かが出ている） */
+      body = `<div class="verdict">${a.stale ? "判定できません" : partial ? "ほかは該当なし" : "該当なし"}</div>`;
     }
     const note = a.note ? `<div class="note">${esc(a.note)}</div>` : "";
     const hold = (a.level === "alarm" && a.hold) ? `<div class="note">${esc(a.hold)}</div>` : "";
@@ -292,21 +302,25 @@ function renderRail(rail){
   const mt = rail.meitetsu;
   const el = document.getElementById("rail");
   el.innerHTML = `<div class="rcol">` +
-    g("JR線", rail.jr.src, `<div class="rows">${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("JR線", rail.jr.src, `<div class="rows" data-trim>${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
       (rail.jr.info ? `<div class="info">${esc(rail.jr.info)}</div>` : "")) +
-    g("地下鉄線", rail.subway.src, `<div class="rows">${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    g("地下鉄線", rail.subway.src, `<div class="rows" data-trim>${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
     `</div><div class="rcol">` +
-    g("名鉄線", mt.src, `<div class="rows">${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("名鉄線", mt.src, `<div class="rows" data-trim>${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
       (mt.other ? `<div class="other">${esc(mt.other)}</div>` : "") +
       (mt.info ? `<div class="info">${esc(mt.info)}</div>` : "") +
       (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
-    g("あおなみ線", rail.aonami.src, `<div class="rows">${railRow(aonami)}</div>`) + `</div>`;
+    g("あおなみ線", rail.aonami.src, `<div class="rows" data-trim>${railRow(aonami)}</div>`) + `</div>`;
   fit(el);
 }
 
 /* ---------- 道路 ---------- */
-function itemsHtml(items, emptyText){
-  if (!items.length) return `<div class="empty">${emptyText}</div>`;
+function itemsHtml(items, emptyText, src){
+  if (!items.length){
+    /* 未取得・取得遅延を「情報はありません」と混同させない */
+    const t = (src && !src.updated) ? "取得中" : (src && src.stale) ? "判定できません" : emptyText;
+    return `<div class="empty${t === emptyText ? "" : " pending"}">${t}</div>`;
+  }
   return `<ul class="items" data-trim>` + items.map(i =>
     `<li class="it ${esc(i.level)}"><span class="badge">${esc(i.kind)}</span>
       <span class="tt">${esc(i.title)}${i.direction ? `<small>${esc(i.direction)}</small>` : ""}${i.located === false ? `<small>区間不明</small>` : ""}</span>
@@ -317,7 +331,7 @@ function renderRoad(road, hasMap){
   document.getElementById("iwFlag").textContent = staleFlag(road.isewangan.src);
   const iw = document.getElementById("iw");
   const r23Panel = document.getElementById("r23Panel");
-  iw.innerHTML = itemsHtml(road.isewangan.items || [], "通行止・渋滞・規制の情報はありません");
+  iw.innerHTML = itemsHtml(road.isewangan.items || [], "通行止・渋滞・規制の情報はありません", road.isewangan.src);
   if (!road.route23){            // 国道23号は保留中（config.json の enable_route23）
     r23Panel.style.display = "none";
     fit(iw);
@@ -336,14 +350,14 @@ function renderRoad(road, hasMap){
   const caveat = hasMap
     ? `<div class="caveat">事故・渋滞は下の地図の交通状況（Google）で確認。一覧は名古屋国道事務所の規制・緊急情報</div>`
     : `<div class="caveat">一覧は名古屋国道事務所の規制・緊急情報（事故・渋滞の即時情報は含みません）</div>`;
-  r.innerHTML = notes + itemsHtml(road.route23.items || [], "規制・緊急情報はありません") + caveat;
+  r.innerHTML = notes + itemsHtml(road.route23.items || [], "規制・緊急情報はありません", road.route23.src) + caveat;
   fit(r);
 }
 
 /* ---------- フッター ---------- */
 function renderFooter(sources, now, has23){
   const bad = sources.filter(s => s.stale);
-  const failing = sources.filter(s => !s.stale && s.failing);
+  const failing = sources.filter(s => !s.stale && (s.failing || (s.partial || []).length));
   const names = ss => ss.map(s => esc(s.name)).join("・");
   /* 出典まで1行に収める必要がある（footer は nowrap）。多いときは件数にまとめる */
   let status;
