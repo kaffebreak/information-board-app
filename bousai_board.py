@@ -605,13 +605,17 @@ def src_jr() -> dict:
                 sec, cause = ja_of(e.get("accident_sec")), ja_of(e.get("cause"))
                 msg = "　".join(v for v in (sec, cause) if v)
             extra = ja_of(e.get("prospect_txt")) or e.get("resume_txt") or ""
-            text = "　".join(v for v in ((st[0] if st else ""), msg, extra) if v)
-            if text:
-                details.append(text)
+            body = "　".join(v for v in (msg, extra) if v)
+            if st or body:
+                details.append(((st[0] if st else ""), body))
         # 同じ路線に「遅れ」と「運転見合わせ」が並ぶことがある。level（見合わせがあれば stop）と
         # 表示する status が食い違わないよう、見合わせを優先する
         status = next((s for s in statuses if "見合わせ" in s), statuses[0] if statuses else "平常運転")
-        lines.append(dict(base, level=rail_level(statuses), status=status, detail=" / ".join(details)))
+        # 行の右端に出す状態と同じ文字が詳細の頭に重なると、本文（時刻・区間）が読み始めから遠くなる。
+        # 状態が違う電文（遅れと見合わせが並ぶとき）は、どちらの話か分かるよう頭に残す
+        texts = ["　".join(v for v in (("" if s == status else s), body) if v) for s, body in details]
+        lines.append(dict(base, level=rail_level(statuses), status=status,
+                          detail=" / ".join(t for t in texts if t)))
     return {"lines": lines}
 
 

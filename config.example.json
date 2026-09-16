@@ -1,5 +1,10 @@
 {
   "port": 8765,
+  "wind_port": 8766,
+  "wind_interval": 60,
+  "wind_caution_ms": 10,
+  "bousai_window_position": null,
+  "wind_window_position": null,
   "google_maps_api_key": "",
   "quake_hold_hours": 24,
   "jr_lines": ["東海道線(豊橋～米原)", "武豊線"],

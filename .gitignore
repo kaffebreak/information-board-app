@@ -3,3 +3,9 @@ __pycache__/
 config.json
 board.log
 board.log.*
+kaze_board.log
+kaze_board.log.*
+kaze_history.json
+kaze_history.json.tmp
+.edge-bousai/
+.edge-wind/

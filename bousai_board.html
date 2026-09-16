@@ -81,7 +81,7 @@ body.noconn header .conn{display:inline-block}
 
 /* ---------- main ---------- */
 main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
-#rail{display:grid;grid-template-columns:1fr 1fr;column-gap:1.6em;align-content:start}
+#rail{display:grid;grid-template-columns:1fr 1fr;column-gap:1.6em;align-content:start;align-items:start}
 .rcol{min-width:0}
 .col{display:flex;flex-direction:column;gap:.9vh;min-height:0}
 .panel{background:var(--panel);border-radius:.5vh;padding:1vh .9vw;display:flex;flex-direction:column;min-height:0}
@@ -97,16 +97,22 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 .group .other{font-size:.95em;color:var(--caution);padding:.3em 0}
 .group .info{font-size:.9em;color:var(--mute);padding:.3em 0}
 .rows{display:grid;grid-template-columns:1fr}
-.row{display:flex;align-items:center;gap:.6em;padding:.32em 0;border-bottom:1px solid var(--rule);min-width:0}
-.row.wide{grid-column:1/-1;flex-wrap:wrap}
+/* flex+flex-wrap だと、幅が足りないとき縮める前に状態（st）が2行目へ落ちる。
+   gridにして「記号・路線名・状態」を必ず1行に置く */
+.row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;
+  gap:.6em;padding:.32em 0;border-bottom:1px solid var(--rule);min-width:0}
+.row.wide{grid-column:1/-1}
 /* min-width は全記号（NH KC TA CA CE M …）が収まる値にする。足りないと文字幅の差がそのまま
    チップ幅の差になり、右の路線名の開始位置が揃わない */
-.chip{flex:none;min-width:2.6em;height:1.55em;padding:0 .25em;border-radius:.3em;border:.16em solid;display:grid;place-items:center;
+.chip{min-width:2.6em;height:1.55em;padding:0 .25em;border-radius:.3em;border:.16em solid;display:grid;place-items:center;
   font-size:.85em;font-weight:700;background:#fff;color:#222}
 .chip.blank{border-width:0}
-.row .nm{font-size:1.15em;font-weight:700;white-space:nowrap}
+/* 路線名＋区間は1行。入らなければ fit() が文字を縮める。省略記号は縮めても入らないときの保険。
+   overflow:hidden を常時付けると、Edge で収まっている区間の末字まで欠けるので別クラスにする */
+.row .nm{font-size:1.15em;font-weight:700;white-space:nowrap;min-width:0}
+.ellip .row .nm{overflow:hidden;text-overflow:ellipsis}
 .row .nm small{font-size:.72em;font-weight:400;color:var(--mute);margin-left:.3em}
-.row .st{margin-left:auto;font-size:1.05em;color:var(--mute);white-space:nowrap}
+.row .st{font-size:1.05em;color:var(--mute);white-space:nowrap}
 .row .st::before{content:"";display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--ok);margin-right:.45em;vertical-align:.1em}
 .row.delay .st,.row.info .st{color:var(--caution);font-weight:700}
 .row.delay .st::before,.row.info .st::before{background:var(--caution)}
@@ -117,10 +123,11 @@ main{display:grid;grid-template-columns:58fr 42fr;gap:.9vw;min-height:0}
 /* 情報提供時間外・提供停止中：サイト側がそう出しているときの表示（異常ではない） */
 .row.offhours .st{color:var(--mute)}
 .row.offhours .st::before{background:transparent;box-shadow:inset 0 0 0 .13em var(--stale)}
-.row .dt{flex-basis:100%;font-size:.98em;line-height:1.4;color:#D5DEE3;padding-left:2.7em;
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+/* 詳細は入るなら全文。はみ出すときだけ 3行 → 1行 → 非表示 と削る */
+.row .dt{grid-column:1/-1;font-size:.98em;line-height:1.4;color:#D5DEE3;padding-left:2.7em;overflow-wrap:anywhere}
+.clamped .row .dt{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .tight .row{padding:.2em 0}
-.tight .row .dt{-webkit-line-clamp:1}
+.tight .row .dt{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 /* 最小の文字サイズでも収まらないとき。行そのものを消す前に補足を落とす */
 .clip .row .dt{display:none}
 /* 件数を削る前に、道路の2行目（方向・内容）を落として全件を残す */
@@ -224,14 +231,23 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 function hhmm(isoStr){ if(!isoStr) return "--:--"; const d=jst(new Date(isoStr)); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
 function staleFlag(src){ if(!src) return ""; if(!src.updated) return "取得待ち"; return src.stale ? `取得できていません（最終 ${hhmm(src.updated)}）` : ""; }
 
-/* はみ出したら文字を縮め、次に補足を落とし、それでも無理なら末尾を「ほか n 件」にまとめる。
+/* 路線名が1行に入らなければ文字を少し縮める。縦にはみ出したら補足を丸め、文字を縮め、次に補足を落とし、それでも無理なら末尾を「ほか n 件」にまとめる。
    黙って末尾が隠れると「出ていない」と読めてしまうので、最後は必ず件数を出す */
 function fit(box){
   const base = +box.dataset.base || 100;
   box.style.fontSize = base + "%";
-  box.classList.remove("tight", "clip");
+  box.classList.remove("ellip", "clamped", "tight", "clip");
   let s = base;
   const over = () => box.scrollHeight > box.clientHeight + 2;
+  /* 路線名＋区間が1行に入らないときは、まず全体をわずかに縮める（区間を省略・折り返ししない） */
+  const narrow = () => [...box.querySelectorAll(".row .nm")].some(n => {
+    const r = document.createRange(); r.selectNodeContents(n);
+    return r.getBoundingClientRect().width > n.clientWidth + 1;
+  });
+  while (narrow() && s > base * 0.8){ s -= 2; box.style.fontSize = s + "%"; }
+  if (narrow()) box.classList.add("ellip");
+  /* 文字を小さくする前に、まず補足を3行に丸める（そのまま入るなら全文を出す） */
+  if (over()) box.classList.add("clamped");
   while (over() && s > 84){ s -= 4; box.style.fontSize = s + "%"; }
   if (over()) box.classList.add("tight");
   while (over() && s > 64){ s -= 4; box.style.fontSize = s + "%"; }
@@ -246,6 +262,42 @@ function fit(box){
       more.textContent = `ほか ${hidden} 件`;
     }
   }
+}
+
+/* 鉄道は路線名・状態を優先する。長い詳細だけを列ごとに丸め、ほかの路線を縮小・省略しない。 */
+function fitRail(box){
+  const base = +box.dataset.base || 130;
+  let size = base;
+  box.style.fontSize = size + "%";
+  const narrow = () => [...box.querySelectorAll(".row .nm")].some(n => {
+    const range = document.createRange(); range.selectNodeContents(n);
+    return range.getBoundingClientRect().width > n.clientWidth + 1;
+  });
+  // 横幅による調整は詳細の長さとは独立させる。
+  while (narrow() && size > base * .8){ size -= 2; box.style.fontSize = size + "%"; }
+  box.classList.toggle("ellip", narrow());
+  const columns = [...box.querySelectorAll(".rcol")];
+  const over = col => col.getBoundingClientRect().bottom > box.getBoundingClientRect().bottom + 1;
+  for (const col of columns){
+    const details = [...col.querySelectorAll(".row .dt")];
+    while (over(col)){
+      // 長い詳細から3行→1行→非表示。反対側の列には影響させない。
+      const candidates = details.filter(d => d.style.display !== "none")
+        .sort((a,b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height);
+      if (!candidates.length) break;
+      const detail = candidates[0], lines = +detail.style.webkitLineClamp;
+      if (lines === 1){ detail.style.display = "none"; }
+      else {
+        detail.style.display = "-webkit-box";
+        detail.style.webkitBoxOrient = "vertical";
+        detail.style.webkitLineClamp = lines === 3 ? "1" : "3";
+        detail.style.overflow = "hidden";
+      }
+    }
+  }
+  // 詳細を除いても路線数や案内文が多い場合だけ、文字サイズを調整する。
+  while (columns.some(over) && size > 64){ size -= 2; box.style.fontSize = size + "%"; }
+  // 路線そのものを「ほかn件」に置き換えない。
 }
 
 /* ---------- 発令条件タイル ---------- */
@@ -323,7 +375,7 @@ function renderRail(rail){
       (mt.info ? `<div class="info">${esc(mt.info)}</div>` : "") +
       (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
     g("あおなみ線", rail.aonami.src, `<div class="rows" data-trim>${railRow(aonami)}</div>`) + `</div>`;
-  fit(el);
+  fitRail(el);
 }
 
 /* ---------- 道路 ---------- */

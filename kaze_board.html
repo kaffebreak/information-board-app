@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>風向・風速モニタ</title>
+<style>
+:root{--bg:#0F2536;--panel:#14304A;--rule:#27506B;--ink:#E8EEF1;--mute:#89A3B3;--ok:#46B98C;--caution:#F0B429;--alarm:#E5484D;--stale:#7B8A95}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);cursor:none}
+body{font-family:"BIZ UDPGothic","BIZ UDPゴシック","Yu Gothic UI","Yu Gothic",Meiryo,"Hiragino Sans","Noto Sans JP",sans-serif;font-feature-settings:"palt";font-variant-numeric:tabular-nums}
+#board{width:1920px;height:1080px;padding:18px;display:grid;grid-template-rows:60px 1fr 24px;gap:12px;transform-origin:top left;position:absolute}
+header{display:flex;align-items:center;gap:24px;background:var(--panel);border-radius:5px;padding:0 20px}
+h1{font-size:31px;margin:0;letter-spacing:.03em}header .subtitle{font-size:19px;color:var(--mute)}#date{margin-left:auto;font-size:24px;color:var(--mute)}
+main{display:grid;grid-template-columns:1fr 1fr;gap:14px;min-height:0}
+.station{background:var(--panel);border-radius:5px;padding:14px 20px 16px;display:grid;grid-template-rows:46px 334px 112px 1fr;gap:12px;min-width:0}
+.station-head{display:flex;align-items:center;position:relative;gap:15px;white-space:nowrap}
+h2{font-size:38px;margin:0;line-height:1}.station-detail{font-size:17px;color:var(--mute)}
+.observation{margin-left:auto;font-size:18px;color:var(--mute);display:flex;align-items:center;gap:9px}
+.lamp{width:11px;height:11px;flex:none;border-radius:50%;background:var(--ok)}
+.station.caution .lamp{background:var(--caution)}.station.stale .lamp,.station.unknown .lamp{background:transparent;border:2px dashed var(--stale);width:14px;height:14px}
+.flag{position:absolute;right:0;top:45px;color:var(--caution);font-size:15px;z-index:1}.stale .flag,.unknown .flag{color:var(--stale)}
+.current{display:grid;grid-template-columns:296px 1fr;gap:24px;min-width:0}
+.rose-box{display:flex;flex-direction:column;align-items:center}.rose{width:296px;height:296px;flex:none;overflow:visible}
+.legend{display:flex;gap:14px;font-size:15px;color:var(--mute);height:20px;align-items:center}.key{display:inline-block;width:13px;height:13px;border-radius:2px;margin-right:5px}
+.rose-note{font-size:12px;color:var(--mute);margin-top:2px;white-space:nowrap}
+.readout{align-self:center;min-width:0}.label{font-size:21px;color:var(--mute);letter-spacing:.06em}.direction{font-size:66px;font-weight:700;line-height:1.15;min-height:80px;margin-bottom:10px}
+.speed-line{display:flex;align-items:baseline;gap:16px;white-space:nowrap;height:146px}.speed{font-size:152px;font-weight:700;line-height:1}.unit{font-size:40px;color:var(--mute)}.secondary{font-size:26px;color:var(--mute);margin-top:3px;white-space:nowrap}
+.calm .speed{font-size:108px;line-height:1.28}.calm .direction{color:var(--stale)}.calm .secondary,.missing .secondary{font-size:21px;color:var(--stale)}.calm .speed-line{height:130px}
+.missing .speed{font-size:72px;line-height:1.8}.stale .readout,.stale .stat-value,.unknown .readout{color:var(--stale)}.high .speed,.high .unit{color:var(--caution)}.stale.high .speed,.stale.high .unit{color:var(--stale)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}.stat{background:var(--bg);border-left:5px solid #A8DDF5;border-radius:3px;padding:10px 16px;position:relative}.stat:nth-child(2){border-color:#6FBBE0}.stat-title{font-size:18px;color:var(--mute)}.stat-value{font-size:60px;line-height:1.12;font-weight:700}.stat-unit,.stat-time{font-size:25px;font-weight:400;color:var(--mute);margin-left:9px}.stat-note{position:absolute;right:12px;top:13px;font-size:13px;color:var(--mute)}
+.trend{display:flex;flex-direction:column;min-height:0}.trend-heading{height:24px;display:flex;align-items:center;justify-content:space-between;font-size:20px;color:var(--mute);gap:10px}.trend-note{font-size:14px}.chart{width:100%;flex:1;min-height:0;overflow:visible}
+svg text{font-family:inherit}footer{display:flex;align-items:center;justify-content:space-between;font-size:15px;color:var(--mute);padding:0 7px}.bad{color:var(--caution)}.demo{color:var(--caution);margin-right:24px}#connection{display:none;font-size:17px;background:var(--caution);color:var(--bg);padding:5px 12px;border-radius:3px}.offline #connection{display:block}
+</style>
+</head>
+<body>
+<div id="board">
+<header><h1>風向・風速</h1><span class="subtitle">名古屋港高潮防波堤／四日市防波堤信号所</span><span id="connection">通信断・再接続中</span><span id="date"></span></header>
+<main id="stations"></main>
+<footer><span id="health">データ取得中（2系統）</span><span>出典：海上保安庁</span></footer>
+</div>
+<script>
+"use strict";
+const params = new URLSearchParams(location.search), DEMO = params.get('demo');
+const DIRS = '北 北北東 北東 東北東 東 東南東 南東 南南東 南 南南西 南西 西南西 西 西北西 北西 北北西'.split(' ');
+const COLORS = ['#4A87AD','#6FBBE0','#A8DDF5'];
+const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const hhmm = value => value ? new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)) : '—';
+const millis = value => new Date(value).getTime();
+let sequence = 0, rendered = 0, lastStatus = null, lastSuccess = 0, connectionFailed = false;
+function fit(){
+  const scale = Math.min(innerWidth/1920,innerHeight/1080), board = document.getElementById('board');
+  board.style.transform = `scale(${scale})`;
+  board.style.left = `${(innerWidth-1920*scale)/2}px`;
+  board.style.top = `${(innerHeight-1080*scale)/2}px`;
+}
+function polar(r,a){const t=a*Math.PI/180;return [148+r*Math.sin(t),148-r*Math.cos(t)];}
+function sector(inner,outer,a){
+  const p=polar(inner,a-9.2),q=polar(outer,a-9.2),r=polar(outer,a+9.2),s=polar(inner,a+9.2);
+  return `M${p} L${q} A${outer},${outer} 0 0 1 ${r} L${s} A${inner},${inner} 0 0 0 ${p} Z`;
+}
+function rose(s){
+  let svg = [26,69,112].map(r=>`<circle cx="148" cy="148" r="${r}" fill="none" stroke="var(--rule)"/>`).join('');
+  for(let i=0;i<16;i++){
+    const a=i*22.5,p=polar(114,a),q=polar(i%4?118:126,a);
+    svg+=`<path d="M${p} L${q}" stroke="var(--rule)"/>`;
+    let radius=26;
+    (s.rose.bins[i]||[0,0,0]).forEach((percent,j)=>{
+      const outer=Math.min(112,radius+percent/15*86);
+      if(outer>radius) svg+=`<path d="${sector(radius,outer,a)}" fill="${COLORS[j]}" stroke="var(--panel)" stroke-width="1.5"/>`;
+      radius=outer;
+    });
+    if((s.rose.bins[i]||[]).reduce((a,b)=>a+b,0)>15){
+      const p=polar(117,a),q=polar(112,a-2.5),r=polar(112,a+2.5);
+      svg+=`<path d="M${p} L${q} L${r}Z" fill="#A8DDF5"/>`;
+    }
+  }
+  const ghosts=s.series.filter(r=>r.degrees!==null && r.kind==='normal');
+  ghosts.forEach((r,i)=>{const p=polar(29,r.degrees),q=polar(109,r.degrees);svg+=`<path d="M${p}L${q}" stroke="var(--ink)" stroke-width="3" opacity="${.09+.23*(i+1)/ghosts.length}"/>`;});
+  if(s.latest?.kind==='normal' && s.latest.degrees!==null) svg+=`<g transform="rotate(${s.latest.degrees} 148 148)"><path d="M148 129 L141 57 L148 43 L155 57 Z" fill="var(--ink)" stroke="var(--panel)" stroke-width="1.5"/></g>`;
+  svg+=`<circle cx="148" cy="148" r="7" fill="${s.latest?.kind==='normal'?'var(--ink)':'var(--panel)'}" stroke="${s.latest?.kind==='normal'?'var(--ink)':'var(--stale)'}" stroke-width="2.5"/>`;
+  svg+='<g font-size="20" font-weight="700" text-anchor="middle"><text x="148" y="27" fill="var(--ink)">北</text><text x="277" y="155" fill="var(--mute)">東</text><text x="148" y="287" fill="var(--mute)">南</text><text x="18" y="155" fill="var(--mute)">西</text></g>';
+  return svg;
+}
+function graph(s,threshold){
+  const x0=46,x1=880,top=48,bottom=320,start=millis(s.start),end=millis(s.end);
+  const x=t=>x0+(millis(t)-start)/(end-start)*(x1-x0), y=v=>bottom-Math.min(v,20)/20*(bottom-top);
+  let svg='';
+  for(let value=0;value<=20;value+=5) svg+=`<path d="M${x0} ${y(value)}H${x1}" stroke="var(--rule)"/><text x="38" y="${y(value)+6}" text-anchor="end" font-size="18" fill="var(--mute)" opacity=".7">${value}</text>`;
+  svg+=`<path d="M${x0} ${y(threshold)}H${x1}" stroke="var(--caution)" stroke-width="2" stroke-dasharray="8 8"/><text x="52" y="${y(threshold)-8}" font-size="18" fill="var(--caution)">注意 ${threshold} m/s</text>`;
+  svg+='<text x="46" y="14" font-size="13" fill="var(--mute)">風向</text>';
+  for(let tick=Math.ceil(start/3600000)*3600000;tick<=end;tick+=3600000){
+    const xx=x(tick);
+    svg+=`<text x="${xx}" y="343" text-anchor="middle" font-size="18" fill="var(--mute)" opacity=".7">${hhmm(tick)}</text>`;
+    const near=s.series.reduce((best,r)=>!best || Math.abs(millis(r.at)-tick)<Math.abs(millis(best.at)-tick)?r:best,null);
+    if(near && Math.abs(millis(near.at)-tick)<=s.minutes*30000 && near.degrees!==null && near.kind==='normal') svg+=`<path d="M0 -9 L-5 8 L0 4 L5 8Z" transform="translate(${xx},26) rotate(${near.degrees})" fill="var(--mute)"/>`;
+  }
+  const segments=[];let segment=[];
+  for(const r of s.series){
+    if(r.kind==='missing' || (segment.length && millis(r.at)-millis(segment[segment.length-1].at)>s.minutes*60000*1.5)){
+      if(segment.length) segments.push(segment);segment=[];
+    }
+    if(r.kind!=='missing') segment.push(r);
+  }
+  if(segment.length)segments.push(segment);
+  for(const seg of segments){
+    const pts=seg.map(r=>`${x(r.at)},${y(r.kind==='calm'?0:r.speed)}`);
+    svg+=`<path d="M${x(seg[0].at)},${bottom} L${pts.join(' L')} L${x(seg[seg.length-1].at)},${bottom}Z" fill="#4FA8D8" opacity=".35"/><path d="M${pts.join(' L')}" fill="none" stroke="#A8DDF5" stroke-width="3"/>`;
+    for(const r of seg){
+      const xx=x(r.at),yy=y(r.kind==='calm'?0:r.speed);
+      svg+=`<circle cx="${xx}" cy="${yy}" r="${s.minutes===30?4.5:3.5}" fill="#A8DDF5" stroke="var(--panel)" stroke-width="1.5"/>`;
+      if(r.speed>20)svg+=`<path d="M${xx-5} ${top+6}L${xx} ${top-3}L${xx+5} ${top+6}" fill="none" stroke="var(--caution)" stroke-width="2"/>`;
+    }
+  }
+  if(s.maximum){const xx=x(s.maximum.at),yy=y(s.maximum.speed);svg+=`<circle cx="${xx}" cy="${yy}" r="8" stroke="var(--ink)" stroke-width="2.5" fill="none"/><text x="${xx}" y="${yy-16}" text-anchor="middle" font-size="22" font-weight="700" fill="var(--ink)">${s.maximum.speed}</text>`;}
+  if(!s.series.length)svg+='<text x="463" y="204" text-anchor="middle" font-size="24" fill="var(--stale)">観測データを取得中</text>';
+  return svg;
+}
+function panel(s,threshold){
+  const current=s.latest,kind=current?.kind||'missing',high=current?.speed>=threshold;
+  const cls=['station',kind==='calm'?'calm':'',kind==='missing'?'missing':'',s.stale?'stale':'',s.unknown?'unknown':'',s.failing||s.partial?'caution':'',high?'high':''].join(' ');
+  const flag=s.stale?'判定できません':s.unknown?'観測値を取得できていません':s.failing?'取得再試行中':s.partial?'一部の観測値を確認中':'';
+  const age=s.observed_at?`観測 ${hhmm(s.observed_at)}（${s.age_minutes}分前）`:'観測 —（未取得）';
+  const speed=kind==='calm'?'風弱く':kind==='missing'?'欠測':current.speed;
+  const secondary=kind==='calm'?'観測値なし（風向・風速とも）':kind==='missing'?'数値の観測がありません':`${Number(s.knots).toFixed(1)} kt ・ 風力 ${s.force}`;
+  const rosePeriod=s.rose.samples?`集計${s.rose.hours.toFixed(1)}時間`:'蓄積待ち';
+  const clipped=s.rose.bins.some(b=>b.reduce((a,v)=>a+v,0)>15);
+  const gaps=s.rose.missing_count>0 || s.rose.samples<s.rose.expected?'・欠測あり':'';
+  return `<section class="${cls}" aria-label="${esc(s.name)}の風向風速">
+    <div class="station-head"><h2>${esc(s.name)}</h2><span class="station-detail">${esc(s.detail)}・${s.minutes}分更新</span><div class="observation"><i class="lamp"></i><span>${age}${s.id==='yokkaichi'&&s.next_at?'・次 '+hhmm(s.next_at):''}</span></div><span class="flag">${flag}</span></div>
+    <div class="current"><div class="rose-box"><svg class="rose" viewBox="0 0 296 296" role="img" aria-label="風配図、矢印は風上">${rose(s)}</svg><div class="legend">${COLORS.map((c,i)=>`<span><i class="key" style="background:${c}"></i>${['〜5','5〜10','10〜 m/s'][i]}</span>`).join('')}</div><div class="rose-note">風配図 ${rosePeriod}${gaps}・外周15%${clipped?'超△':''}／矢印＝風上</div></div>
+    <div class="readout"><div class="label">風向</div><div class="direction">${esc(current?.direction||'—')}</div><div class="label">風速</div><div class="speed-line"><span class="speed">${speed}</span>${kind==='normal'?'<span class="unit">m/s</span>':''}</div><div class="secondary">${secondary}</div></div></div>
+    <div class="stats"><div class="stat"><div class="stat-title">6時間最大風速</div><div class="stat-value">${s.maximum?.speed??'—'}<span class="stat-unit">m/s</span><span class="stat-time">${hhmm(s.maximum?.at)}</span></div></div><div class="stat"><div class="stat-title">6時間平均</div><span class="stat-note">数値 ${s.numeric_count}/${s.expected_count}件</span><div class="stat-value">${s.average===null?'—':s.average.toFixed(1)}<span class="stat-unit">m/s</span></div></div></div>
+    <div class="trend"><div class="trend-heading"><span>直近6時間の推移（m/s）</span><span class="trend-note">${s.minutes}分値・${s.minutes===30?'補間なし・':''}風弱く＝0／欠測は空白</span></div><svg class="chart" viewBox="0 0 895 348" preserveAspectRatio="none" role="img" aria-label="6時間の風速推移、縦軸0から20メートル毎秒">${graph(s,threshold)}</svg></div>
+  </section>`;
+}
+function render(status){
+  const now=new Date();
+  document.getElementById('date').textContent=new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(now);
+  const st=structuredClone(status);
+  if(!DEMO) for(const s of st.stations){
+    if(!s.observed_at)continue;
+    const age=Math.max(0,(Date.now()-millis(s.observed_at))/60000);
+    s.age_minutes=Math.floor(age);s.failing ||= age>s.minutes+5;s.stale ||= age>s.minutes*2+5;
+  }
+  document.getElementById('stations').innerHTML=st.stations.map(s=>panel(s,st.caution_ms)).join('');
+  const bad=st.stations.filter(s=>s.stale||s.unknown),retry=st.stations.filter(s=>s.failing||s.partial);
+  const offline=!DEMO && (connectionFailed || (lastSuccess>0 && Date.now()-lastSuccess>45000));
+  document.body.classList.toggle('offline',offline);
+  let health=offline?'通信断・再接続中（前回値を表示）':bad.length?`${bad.map(s=>s.name).join('・')} 判定できません`:retry.length?`${retry.map(s=>s.name).join('・')} 再取得中`:'データ取得 正常（2系統）';
+  if(st.history_error)health+=' ／ 履歴保存失敗';
+  document.getElementById('health').innerHTML=(DEMO?'<span class="demo">表示確認モード（ダミーデータ）</span>':'')+`<span class="${offline||bad.length||retry.length||st.history_error?'bad':''}">${health}</span>`;
+}
+function demoStatus(mode){
+  const now=new Date(), end=new Date(now.getTime()-3*60000);end.setUTCSeconds(0,0);
+  const stations=['nagoya','yokkaichi'].map((id,index)=>{
+    const minutes=index?30:15, endAt=new Date(end.getTime()-(index?15:0)*60000), rows=[];
+    const values=index?[2,3,3,2,2,4,3,2,3,3,2,3,2]:[3,4,4,5,5,7,6,6,5,5,4,4,5,4,3,3,4,3,2,2,2,0,0,0,0];
+    values.forEach((v,i)=>{const calm=!index&&i>=21,dir=index?7:9;rows.push({at:new Date(endAt.getTime()-(values.length-1-i)*minutes*60000).toISOString(),kind:calm?'calm':'normal',speed:calm?null:v,direction:calm?null:DIRS[dir],degrees:calm?null:dir*22.5});});
+    if(mode!=='normal' && index){rows[7].speed=23;rows[rows.length-1].speed=18;}
+    const numeric=rows.filter(r=>r.speed!==null),latest=rows[rows.length-1],max=numeric.reduce((a,b)=>a.speed>b.speed?a:b);
+    const stale=mode!=='normal'&&mode!=='high'&&index===1;
+    if(stale)rows.forEach(r=>r.at=new Date(millis(r.at)-90*60000).toISOString());
+    const bins=DIRS.map((_,i)=>[1.5+(i===8?4:0)+(i===9?5:0),.8+(i===9?2:0),.5]);
+    return {id,name:index?'四日市':'名古屋',detail:index?'防波堤信号所':'高潮防波堤 中央堤東端',minutes,latest,observed_at:latest.at,next_at:new Date(millis(latest.at)+minutes*60000).toISOString(),age_minutes:Math.max(0,Math.floor((now-millis(latest.at))/60000)),stale,unknown:false,failing:false,partial:false,knots:latest.speed===null?null:latest.speed*1.94384,force:latest.speed>=18?8:2,series:rows,start:rows[0].at,end:latest.at,maximum:max,average:numeric.reduce((a,r)=>a+r.speed,0)/numeric.length,numeric_count:numeric.length,expected_count:values.length,rose:{bins,hours:24,count:96,samples:96,expected:96}};
+  });
+  return {now:now.toISOString(),caution_ms:10,stations};
+}
+async function refresh(){
+  const request=++sequence,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),40000);
+  try{
+    const response=await fetch('/api/status',{cache:'no-store',signal:controller.signal});
+    if(!response.ok)throw new Error(`HTTP ${response.status}`);
+    const status=await response.json();
+    if(request<rendered)return;
+    // 次のリクエストの開始では捨てず、最後に描画した応答と比較する。
+    rendered=request;lastSuccess=Date.now();connectionFailed=false;lastStatus=status;render(status);
+  }catch(error){if(request>=rendered){connectionFailed=true;if(lastStatus)render(lastStatus);}}
+  finally{clearTimeout(timer);}
+}
+fit();addEventListener('resize',fit);
+if(DEMO){lastStatus=demoStatus(DEMO);render(lastStatus);setInterval(()=>render(lastStatus),15000);}
+else{
+  lastStatus={caution_ms:10,stations:['nagoya','yokkaichi'].map((id,i)=>({id,name:i?'四日市':'名古屋',detail:i?'防波堤信号所':'高潮防波堤 中央堤東端',minutes:i?30:15,latest:null,observed_at:null,stale:true,unknown:true,series:[],start:new Date(Date.now()-21600000).toISOString(),end:new Date().toISOString(),maximum:null,average:null,numeric_count:0,expected_count:i?13:25,rose:{bins:DIRS.map(()=>[0,0,0]),samples:0,expected:0}}))};
+  render(lastStatus);refresh();setInterval(refresh,15000);setInterval(()=>render(lastStatus),15000);
+}
+</script>
+</body>
+</html>
