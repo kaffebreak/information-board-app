@@ -1,5 +1,6 @@
 {
   "port": 8765,
+  "enable_wind": true,
   "wind_port": 8766,
   "wind_interval": 60,
   "wind_caution_ms": 10,

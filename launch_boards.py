@@ -1,4 +1,4 @@
-"""各サーバーの応答を待ち、2画面を独立して起動する。"""
+"""設定で有効なサーバーの応答を待ち、各画面を独立して起動する。"""
 import json
 import os
 from pathlib import Path
@@ -60,9 +60,14 @@ def main():
         supervise({"bousai": "bousai_board.py", "wind": "kaze_board.py"}[sys.argv[2]])
         return
     cfg = config()
-    ports = {"bousai": int(cfg.get("port", 8765)), "wind": int(cfg.get("wind_port", 8766))}
-    if ports["bousai"] == ports["wind"]:
-        raise ValueError("port と wind_port は別にしてください")
+    enable_wind = cfg.get("enable_wind", True)
+    if type(enable_wind) is not bool:
+        raise ValueError("enable_wind は true または false を指定してください")
+    ports = {"bousai": int(cfg.get("port", 8765))}
+    if enable_wind:
+        ports["wind"] = int(cfg.get("wind_port", 8766))
+        if ports["bousai"] == ports["wind"]:
+            raise ValueError("port と wind_port は別にしてください")
     for key in ports:
         position = cfg.get(key + "_window_position")
         if position is not None and (not isinstance(position, list) or len(position) != 2 or any(type(x) is not int for x in position)):
