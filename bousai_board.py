@@ -81,7 +81,13 @@ DEFAULT_CONFIG = {
 }
 
 
+# 設定を読めなかったときの理由。読み込みはログの出力先を決める前（import時）なので、
+# main() でログファイルにも書き直す（起動バッチ経由では標準エラーが捨てられるため）
+CONFIG_ERROR = ""
+
+
 def load_config() -> dict:
+    global CONFIG_ERROR
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     path = os.path.join(HERE, "config.json")
     if os.path.exists(path):
@@ -95,7 +101,8 @@ def load_config() -> dict:
                 else:
                     cfg[k] = v
         except Exception as e:  # 設定ミスで止まらないように
-            log.error("config.json の読み込みに失敗: %s（既定値で起動）", e)
+            CONFIG_ERROR = f"config.json の読み込みに失敗: {e}（既定値で起動）"
+            log.error("%s", CONFIG_ERROR)
     return cfg
 
 
@@ -1295,15 +1302,18 @@ def main():
     # スレッドの想定外の停止は既定では stderr にしか出ない（最小化した窓では見えない）
     threading.excepthook = lambda a: log.error(
         "スレッドが停止しました\n%s", "".join(traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback)).strip())
+    if CONFIG_ERROR:
+        log.error("%s", CONFIG_ERROR)
+    # ポートを確保してから取得を始める。二重起動ですぐ終了するプロセスに、各社サイトへアクセスさせない
+    try:
+        srv = ThreadingHTTPServer((CFG["host"], int(CFG["port"])), Handler)
+    except (OSError, ValueError, TypeError, OverflowError) as e:
+        # ポート使用中（二重起動）・設定の誤り・権限不足。監視側が再起動を繰り返すので、理由をログに残す
+        log.error("起動できません（ポート %s が使用中か、設定・権限に問題があります）: %s", CFG.get("port"), e)
+        sys.exit(1)
     for i, key in enumerate(SOURCES):
         th = threading.Thread(target=lambda k=key, d=i: (time.sleep(d * 0.7), run_source(k)), daemon=True)
         th.start()
-    try:
-        srv = ThreadingHTTPServer((CFG["host"], int(CFG["port"])), Handler)
-    except OSError as e:
-        # ポート使用中（二重起動）や権限不足。run_server.bat が再起動を繰り返すので、理由をログに残す
-        log.error("起動できません（ポート %s が使用中か、権限がありません）: %s", CFG["port"], e)
-        sys.exit(1)
     log.info("起動しました  http://%s:%s/", CFG["host"], CFG["port"])
     try:
         srv.serve_forever()

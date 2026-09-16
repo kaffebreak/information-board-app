@@ -229,7 +229,18 @@ setInterval(tick, 1000); tick();
 /* ---------- 共通 ---------- */
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function hhmm(isoStr){ if(!isoStr) return "--:--"; const d=jst(new Date(isoStr)); return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
-function staleFlag(src){ if(!src) return ""; if(!src.updated) return "取得待ち"; return src.stale ? `取得できていません（最終 ${hhmm(src.updated)}）` : ""; }
+function staleFlag(src){
+  if(!src) return "";
+  /* 一度も取れていない系統は、失敗した時点で「待ち」ではなくなる */
+  if(!src.updated) return src.failing ? "取得できていません" : "取得待ち";
+  return src.stale ? `取得できていません（最終 ${hhmm(src.updated)}）` : "";
+}
+/* 取れていない系統の本文に出す言葉（取得済みで新しければ空）。平常の緑と区別して灰色で出す */
+function pendingText(src){
+  if(!src) return "";
+  if(!src.updated) return src.failing ? "判定できません" : "取得中";
+  return src.stale ? "判定できません" : "";
+}
 
 /* 路線名が1行に入らなければ文字を少し縮める。縦にはみ出したら補足を丸め、文字を縮め、次に補足を落とし、それでも無理なら末尾を「ほか n 件」にまとめる。
    黙って末尾が隠れると「出ていない」と読めてしまうので、最後は必ず件数を出す */
@@ -347,6 +358,14 @@ function renderAlerts(alerts){
 }
 
 /* ---------- 鉄道 ---------- */
+/* 古い系統の平常・時間外の行を前回の緑のまま残すと「平常」と読めるので「判定できません」にする。
+   運転見合わせ・遅れなどの行は安全側に残す（発令条件タイルが古くても該当の行を残すのと同じ） */
+function railRows(lines, src){
+  const t = pendingText(src);
+  const rows = (lines || []).map(l => (t && ["normal", "offhours"].includes(l.level))
+    ? {...l, level:"unknown", status:t, detail:""} : l);
+  return rows.map(l => railRow(l)).join("") || `<div class="empty pending">${t || "表示する路線がありません"}</div>`;
+}
 function railRow(l, wideIfAbnormal = true){
   const abn = !["normal", "unknown", "offhours"].includes(l.level);
   const chip = l.code
@@ -362,19 +381,19 @@ function renderRail(rail){
     return `<div class="group"><div class="gh"><span>${title}</span>${f ? `<span class="flag">${esc(f)}</span>` : ""}</div>${inner}</div>`;
   };
   const aonami = {name:"あおなみ線", code:"", color:"#1E6FB8", level: rail.aonami.level || "unknown",
-                  status: rail.aonami.status || "取得中", detail: rail.aonami.detail || ""};
+                  status: rail.aonami.status || pendingText(rail.aonami.src) || "取得中", detail: rail.aonami.detail || ""};
   const mt = rail.meitetsu;
   const el = document.getElementById("rail");
   el.innerHTML = `<div class="rcol">` +
-    g("JR線", rail.jr.src, `<div class="rows" data-trim>${(rail.jr.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("JR線", rail.jr.src, `<div class="rows" data-trim>${railRows(rail.jr.lines, rail.jr.src)}</div>` +
       (rail.jr.info ? `<div class="info">${esc(rail.jr.info)}</div>` : "")) +
-    g("地下鉄線", rail.subway.src, `<div class="rows" data-trim>${(rail.subway.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>`) +
+    g("地下鉄線", rail.subway.src, `<div class="rows" data-trim>${railRows(rail.subway.lines, rail.subway.src)}</div>`) +
     `</div><div class="rcol">` +
-    g("名鉄線", mt.src, `<div class="rows" data-trim>${(mt.lines || []).map(l => railRow(l)).join("") || '<div class="empty">取得中</div>'}</div>` +
+    g("名鉄線", mt.src, `<div class="rows" data-trim>${railRows(mt.lines, mt.src)}</div>` +
       (mt.other ? `<div class="other">${esc(mt.other)}</div>` : "") +
       (mt.info ? `<div class="info">${esc(mt.info)}</div>` : "") +
       (mt.notice ? `<div class="notes">${esc(mt.notice)}</div>` : "")) +
-    g("あおなみ線", rail.aonami.src, `<div class="rows" data-trim>${railRow(aonami)}</div>`) + `</div>`;
+    g("あおなみ線", rail.aonami.src, `<div class="rows" data-trim>${railRows([aonami], rail.aonami.src)}</div>`) + `</div>`;
   fitRail(el);
 }
 
@@ -382,8 +401,8 @@ function renderRail(rail){
 function itemsHtml(items, emptyText, src){
   if (!items.length){
     /* 未取得・取得遅延を「情報はありません」と混同させない */
-    const t = (src && !src.updated) ? "取得中" : (src && src.stale) ? "判定できません" : emptyText;
-    return `<div class="empty${t === emptyText ? "" : " pending"}">${t}</div>`;
+    const t = pendingText(src);
+    return `<div class="empty${t ? " pending" : ""}">${t || emptyText}</div>`;
   }
   return `<ul class="items" data-trim>` + items.map(i => {
     /* 1行目＝種別と場所、2行目＝方向と内容。1行に流すと折り返しがバッジの下に回り込んで読みにくい */

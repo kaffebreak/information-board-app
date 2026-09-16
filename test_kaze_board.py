@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import kaze_board as k
 import launch_boards as launcher
 
@@ -105,6 +105,12 @@ class WindTests(unittest.TestCase):
                 Path(path).write_text('{broken',encoding='utf-8')
                 k.load_history(path)
 
+    def test_knots_are_whole_numbers(self):
+        # 元の風速が整数なので、換算したノットに小数の精度を持たせない
+        for speed,knots in [(2,4),(4,8),(10,19),(18,35)]:
+            v=self.view([self.row(speed=speed)])
+            self.assertEqual((v['knots'],type(v['knots'])),(knots,int))
+
     def test_beaufort_boundaries(self):
         for speed,force in [(0,0),(.3,1),(1.6,2),(5.5,4),(13.9,7),(17.2,8),(32.7,12)]:
             self.assertEqual(k.beaufort(speed),force)
@@ -178,6 +184,58 @@ class WindTests(unittest.TestCase):
             sleep.assert_called_once_with(1)
             spawn.assert_called_once()
             self.assertIn('--window-position=-1920,0',spawn.call_args[0][0])
+    def fetch_twice(self, history, first_now, second_now, persist):
+        fresh=dict(rows=[self.row()],partial=False)
+        state=dict(rows=[],updated=None,failing=False,partial=False)
+        with patch.dict(k.STATE,nagoya=state), patch.dict(k.HISTORY,nagoya=history,yokkaichi=[]):
+            with patch.object(k,'HISTORY_ERROR',False), patch.dict(k.SOURCES,nagoya=lambda:fresh):
+                with patch.object(k,'persist_history',persist), patch.object(k,'now_jst',return_value=first_now):
+                    k.update_source('nagoya')
+                    first_error=k.HISTORY_ERROR
+                with patch.object(k,'persist_history',persist), patch.object(k,'now_jst',return_value=second_now):
+                    k.update_source('nagoya')
+                return first_error,k.HISTORY_ERROR,list(k.HISTORY['nagoya'])
+
+    def test_unchanged_fetch_does_not_rewrite_history(self):
+        persist=MagicMock()
+        _,_,history=self.fetch_twice([],self.now,self.now,persist)
+        self.assertEqual(persist.call_count,1)
+        self.assertEqual([r['at'] for r in history],[self.now.isoformat()])
+
+    def test_expired_rows_are_saved_without_new_observations(self):
+        persist=MagicMock()
+        old=self.row(self.now-dt.timedelta(hours=23,minutes=59))
+        _,_,history=self.fetch_twice([old],self.now,self.now+dt.timedelta(minutes=2),persist)
+        self.assertEqual(persist.call_count,2)
+        self.assertEqual([r['at'] for r in history],[self.now.isoformat()])
+
+    def test_failed_save_is_retried_without_new_rows(self):
+        persist=MagicMock(side_effect=[OSError('disk full'),None])
+        with self.assertLogs('wind','WARNING'):
+            first,last,_=self.fetch_twice([],self.now,self.now,persist)
+        self.assertEqual(persist.call_count,2)
+        self.assertEqual((first,last),(True,False))
+
+    def test_startup_errors_are_written_to_wind_log(self):
+        cases=[({'wind_caution_ms':25},None,'wind_caution_ms'),
+               ({},OSError('address already in use'),'address already in use')]
+        for cfg,server_error,expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as folder:
+                handler=k.wind_log_handler(folder)
+                root=logging.getLogger()
+                try:
+                    with patch.dict(k.CFG,cfg), patch.object(k,'wind_log_handler',return_value=handler):
+                        with patch.object(k.logging,'basicConfig'), patch.object(k.bousai_board,'CONFIG_ERROR','設定を読めません（試験）'):
+                            with patch.object(k,'ThreadingHTTPServer',side_effect=server_error), patch.object(k,'load_history') as load:
+                                with self.assertRaises(SystemExit):
+                                    k.main()
+                    load.assert_not_called()
+                finally:
+                    root.removeHandler(handler)
+                    handler.close()
+                text=(Path(folder)/'kaze_board.log').read_text(encoding='utf-8')
+                self.assertIn(expected,text)
+                self.assertIn('設定を読めません（試験）',text)
 
 
 if __name__ == '__main__':

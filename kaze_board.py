@@ -12,11 +12,13 @@ import logging.handlers
 import math
 import os
 import re
+import sys
 import threading
 import unicodedata
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
+import bousai_board
 from bousai_board import HERE, JST, Handler as BaseHandler, http_get, load_config, now_jst, parse_iso
 
 log = logging.getLogger("wind")
@@ -182,14 +184,18 @@ def update_source(key):
             if previous and result["rows"][-1]["at"] < previous[-1]["at"]:
                 raise ValueError("観測時刻が前回より古いため前回値を保持")
             STATE[key].update(result, updated=now.isoformat(), failing=False)
-            for station in STATIONS:
-                HISTORY[station] = merge_history(HISTORY[station], result["rows"] if station == key else [], now)
-            try:
-                persist_history()
-                HISTORY_ERROR = False
-            except OSError as exc:
-                HISTORY_ERROR = True
-                log.warning("風向履歴の保存失敗（観測の更新は継続）: %s", exc)
+            merged = {station: merge_history(HISTORY[station], result["rows"] if station == key else [], now)
+                      for station in STATIONS}
+            # 観測が増えず期限切れも無い取得（304応答など）では書き直さない。前回の保存に失敗していれば再試行する。
+            changed = merged != HISTORY
+            HISTORY.update(merged)
+            if changed or HISTORY_ERROR:
+                try:
+                    persist_history()
+                    HISTORY_ERROR = False
+                except OSError as exc:
+                    HISTORY_ERROR = True
+                    log.warning("風向履歴の保存失敗（観測の更新は継続）: %s", exc)
         log.info("%s 風向風速 更新 %s", STATIONS[key]["name"], result["rows"][-1]["at"])
     except Exception as exc:
         with LOCK:
@@ -244,7 +250,8 @@ def station_view(key, state, history, now):
                 next_at=(end + dt.timedelta(minutes=meta["minutes"])).isoformat() if latest else None,
                 updated=state["updated"], failing=bool(failing), partial=state["partial"],
                 unknown=unknown, stale=stale,
-                knots=round(speed * 1.94384, 1) if speed is not None else None,
+                # 元の風速は整数（前後0.5 m/s の幅）なので、換算したノットも整数にする
+                knots=round(speed * 1.94384) if speed is not None else None,
                 force=beaufort(speed) if speed is not None else None,
                 series=series, start=start.isoformat(), end=end.isoformat(),
                 maximum=maximum, average=round(sum(r["speed"] for r in numeric) / len(numeric), 1) if numeric else None,
@@ -294,17 +301,25 @@ def main():
         logging.getLogger().addHandler(handler)
     except OSError as exc:
         log.warning("ログを開けません: %s", exc)
-    if int(CFG["wind_port"]) == int(CFG["port"]):
-        raise ValueError("wind_port は防災ボードの port と別にしてください")
-    threshold = float(CFG["wind_caution_ms"])
-    if not math.isfinite(threshold) or not 0 < threshold <= 20:
-        raise ValueError("wind_caution_ms は0より大きく20以下にしてください（固定軸）")
-    CFG["wind_caution_ms"] = threshold
-    interval = float(CFG["wind_interval"])
-    if not math.isfinite(interval) or interval <= 0:
-        raise ValueError("wind_interval は正の秒数を指定してください")
-    CFG["wind_interval"] = max(15, interval)
-    server = ThreadingHTTPServer((CFG["host"], int(CFG["wind_port"])), Handler)
+    if bousai_board.CONFIG_ERROR:
+        log.error("%s", bousai_board.CONFIG_ERROR)
+    # 起動バッチ経由では標準エラーが捨てられる。設定の誤りやポートの競合で終了する理由をログに残す
+    # （残さないと、監視側の10秒ごとの再起動が黙って続き、画面も開かないまま待ち続ける）
+    try:
+        if int(CFG["wind_port"]) == int(CFG["port"]):
+            raise ValueError("wind_port は防災ボードの port と別にしてください")
+        threshold = float(CFG["wind_caution_ms"])
+        if not math.isfinite(threshold) or not 0 < threshold <= 20:
+            raise ValueError("wind_caution_ms は0より大きく20以下にしてください（固定軸）")
+        interval = float(CFG["wind_interval"])
+        if not math.isfinite(interval) or interval <= 0:
+            raise ValueError("wind_interval は正の秒数を指定してください")
+        CFG["wind_caution_ms"] = threshold
+        CFG["wind_interval"] = max(15, interval)
+        server = ThreadingHTTPServer((CFG["host"], int(CFG["wind_port"])), Handler)
+    except (OSError, ValueError, TypeError, OverflowError) as exc:
+        log.error("起動できません（設定かポート %s を確認してください）: %s", CFG.get("wind_port"), exc)
+        sys.exit(1)
     load_history()
     for key in STATIONS:
         threading.Thread(target=run_source, args=(key,), daemon=True).start()
